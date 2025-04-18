@@ -107,7 +107,11 @@ def val_bar(df, column, top_n=9, sort=False):
 def ts_plot(df, x_col, y_col, title=None):
     """Plot a time series for a datetime x_col vs numeric y_col."""
     plt.rcdefaults()
-    sns.set_style('whitegrid')
+    sns.set_style("whitegrid", {
+        "axes.facecolor": "white",    
+        "grid.color": "lightgrey",    
+        "grid.linestyle": "-"         
+    })
     
     plt.rc("figure", autolayout=True, figsize=(12, 6))
     plt.rc("axes", labelweight="bold", labelsize="large", titleweight="bold", titlesize=16)
