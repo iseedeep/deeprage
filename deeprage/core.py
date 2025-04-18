@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 import seaborn as sns
 from prettytable import PrettyTable
 from ydata_profiling import ProfileReport
@@ -105,20 +106,28 @@ def val_bar(df, column, top_n=9, sort=False):
 
 
 def ts_plot(df, x_col, y_col, title=None):
-    sns.set_style("whitegrid")
+    sns.set_style("whitegrid", {
+        "figure.facecolor": "white",
+        "axes.facecolor":   "white",
+        "grid.color":       "lightgrey"
+    })
 
-    fig, ax = plt.subplots(figsize=(12, 6), facecolor="white")
-    ax.set_facecolor("white")  
+    fig, ax = plt.subplots(figsize=(12, 6))
+    fig.patch.set_facecolor("white")
+    ax.set_facecolor("white")
 
     ax.plot(df[x_col], df[y_col], color="black")
 
     ax.grid(True)
 
-    ax.set_title(title or f"{y_col} over {x_col}", weight="bold")
+    locator = mdates.AutoDateLocator()
+    formatter = mdates.ConciseDateFormatter(locator)
+    ax.xaxis.set_major_locator(locator)
+    ax.xaxis.set_major_formatter(formatter)
+
+    ax.set_title(title or f"{y_col} → {x_col}", weight="bold")
     ax.set_xlabel(x_col, weight="bold")
     ax.set_ylabel(y_col, weight="bold")
-
-    plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
 
     plt.tight_layout()
     plt.show()
