@@ -1,0 +1,7 @@
+setup.py
+deeprage.egg-info/PKG-INFO
+deeprage.egg-info/SOURCES.txt
+deeprage.egg-info/dependency_links.txt
+deeprage.egg-info/entry_points.txt
+deeprage.egg-info/requires.txt
+deeprage.egg-info/top_level.txt

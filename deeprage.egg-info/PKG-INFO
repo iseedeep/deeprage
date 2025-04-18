@@ -1,0 +1,16 @@
+Metadata-Version: 2.4
+Name: deeprage
+Version: 0.1.0
+Summary: DeepRage: your all‑in‑one data profiling, visualization, and modeling toolkit
+Author: Your Name
+Requires-Dist: pandas
+Requires-Dist: numpy
+Requires-Dist: matplotlib
+Requires-Dist: seaborn
+Requires-Dist: prettytable
+Requires-Dist: fastapi
+Requires-Dist: uvicorn
+Requires-Dist: click
+Dynamic: author
+Dynamic: requires-dist
+Dynamic: summary
