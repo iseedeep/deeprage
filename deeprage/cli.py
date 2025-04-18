@@ -1,6 +1,6 @@
 import click
 import pandas as pd
-from deeprage.core import RageReport, val_pie, val_bar
+from deeprage.core import RageReport, val_pie, val_bar, ts_plot
 
 @click.group()
 def main():
@@ -55,3 +55,15 @@ def missing_summary(train_csv, test_csv, target):
 
 if __name__ == '__main__':
     main()
+
+@main.command()
+@click.argument('csv')
+@click.argument('x_col')
+@click.argument('y_col')
+@click.option('--title', default=None, help='Plot title')
+def ts(csv, x_col, y_col, title):
+    """
+    Generate a time‑series plot for <x_col> vs <y_col>.
+    """
+    df = pd.read_csv(csv, parse_dates=[x_col])
+    ts_plot(df, x_col, y_col, title)
