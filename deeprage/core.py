@@ -124,10 +124,11 @@ def ts_plot(df, x_col, y_col, title=None):
     )
 
     fig, ax = plt.subplots()
-    ax.plot(df[x_col], df[y_col], color='black', linewidth=2)
+    ax.plot(df[x_col], df[y_col], color='black')
     ax.set_title(title or f"{y_col} over {x_col}")
     ax.set_xlabel(x_col)
     ax.set_ylabel(y_col)
+    plt.tight_layout()
     plt.show()
 
 
