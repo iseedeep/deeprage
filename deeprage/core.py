@@ -105,26 +105,16 @@ def val_bar(df, column, top_n=9, sort=False):
 
 
 def ts_plot(df, x_col, y_col, title=None):
-    """Plot a black‑themed time series for a datetime x_col vs numeric y_col."""
+    """Plot a time series for a datetime x_col vs numeric y_col."""
+    plt.rcdefaults()
     sns.set_style('whitegrid')
-    plt.rc(
-        'figure',
-        autolayout=True,
-        figsize=(12, 6),
-        titlesize=18,
-        titleweight='bold'
-    )
-    plt.rc(
-        'axes',
-        labelweight='bold',
-        labelsize='large',
-        titlesize=16,
-        titleweight='bold',
-        titlepad=10
-    )
+    
+    plt.rc("figure", autolayout=True, figsize=(12, 6))
+    plt.rc("axes", labelweight="bold", labelsize="large", titleweight="bold", titlesize=16)
 
     fig, ax = plt.subplots()
     ax.plot(df[x_col], df[y_col], color='black')
+    
     ax.set_title(title or f"{y_col} over {x_col}")
     ax.set_xlabel(x_col)
     ax.set_ylabel(y_col)
