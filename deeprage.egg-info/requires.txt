@@ -1,8 +1,0 @@
-pandas
-numpy
-matplotlib
-seaborn
-prettytable
-fastapi
-uvicorn
-click
