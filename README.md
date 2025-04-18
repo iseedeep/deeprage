@@ -1,19 +1,20 @@
 # DeepRage
 
 **DeepRage** – Reports · Analytics · Graphical · Explore  
-An all‑in‑one Python toolkit for EDA, profiling, visualization, and natural‑language exploration of your datasets.
+An all‑in‑one Python toolkit for EDA, profiling, visualization, time‑series analysis, and natural‑language exploration of your datasets.
 
 ## Features
 
 - **Reports**: Full HTML EDA report via ydata‑profiling (`deeprage profile`).
 - **Analytics**:
-  - Missing‑data diagnostics with train/test comparison (`deeprage missing_summary`).
+  - Missing‑data diagnostics with optional train/test comparison (`deeprage missing_summary`).
   - Baseline modeling (Ridge/Logistic Regression) with performance metrics (`deeprage model`).
   - Automatic feature suggestions for datetime columns (`RageReport.suggest_features()`).
 - **Graphical**:
   - Black‑themed pie charts (`deeprage pie`) and bar charts (`deeprage bar`) with counts & percentages.
+  - Black‑themed time‑series plotting (`deeprage ts`) for datetime vs numeric data.
 - **Explore**:
-  - Jupyter magics for inline EDA (`%deeprage_profile`, `%deeprage_pie`, `%deeprage_bar`, `%deeprage_missing`).
+  - Jupyter magics for inline EDA (`%deeprage_profile`, `%deeprage_pie`, `%deeprage_bar`, `%deeprage_ts`, `%deeprage_missing`).
   - FastAPI `/ask` endpoint for natural‑language queries (data preview, SHAP feature importance).
 
 ## Installation
@@ -27,10 +28,13 @@ cd deeprage
 conda env create -f environment.yml
 conda activate deeprage
 
-# or venv
+# or with venv
 git checkout main
 py -3.11 -m venv venv
-source venv/bin/activate  # or .\venv\Scripts\Activate.ps1
+# on Windows
+.\venv\Scripts\Activate.ps1
+# on Linux/Mac
+source venv/bin/activate
 
 # Editable install
 pip install -e .
@@ -44,17 +48,20 @@ pip install -e .
 # Generate HTML EDA report
 deeprage profile data.csv
 
-# Missing-data summary (train vs. test)
-deeprage missing_summary train.csv test.csv TargetColumn
+# Missing-data summary (train-only or train vs. test)
+deeprage missing_summary train.csv [test.csv] TargetColumn
 
-# Fit baseline model and show metrics
+# Fit baseline model
 deeprage model data.csv TargetColumn
 
-# Pie chart of top N categories
+# Category pie chart
 deeprage pie data.csv CategoryColumn --top_n 5 --sort
 
-# Bar chart of top N categories
+# Category bar chart
 deeprage bar data.csv CategoryColumn --top_n 5 --sort
+
+# Time-series plot
+deeprage ts data.csv DateColumn ValueColumn --title "Trend"
 ```
 
 ### Jupyter Notebook Magics
@@ -62,23 +69,28 @@ deeprage bar data.csv CategoryColumn --top_n 5 --sort
 ```python
 %load_ext deeprage.notebook
 
-# Inline EDA profile
+# EDA profile
 %deeprage_profile data.csv
 
-# Inline pie chart
+# Pie chart
 %deeprage_pie data.csv CategoryColumn
 
-# Inline bar chart
+# Bar chart
 %deeprage_bar data.csv CategoryColumn
 
-# Inline missing-data summary
+# Time-series plot
+%deeprage_ts data.csv DateColumn ValueColumn "Trend"
+
+# Missing-data summary
 %deeprage_missing train.csv test.csv TargetColumn
 ```
 
 ### Python API
 
 ```python
-from deeprage.core import RageReport, val_bar, val_pie
+from deeprage.core import (
+    RageReport, get_values, val_pie, val_bar, ts_plot
+)
 import pandas as pd
 
 # Load data
@@ -87,13 +99,19 @@ df_test  = pd.read_csv('test.csv')
 
 # Missing-data summary
 rr = RageReport(df_train).clean()
-table = rr.missing_summary(df_test, target='TargetColumn')
-print(table)
+tbl1 = rr.missing_summary('TargetColumn')            # train-only
+tbl2 = rr.missing_summary(df_test, 'TargetColumn')  # train vs. test
+print(tbl1)
+print(tbl2)
 
-# Visualize
-df = pd.read_csv('data.csv')
-val_pie(df, 'CategoryColumn', top_n=5, sort=True)
-val_bar(df, 'CategoryColumn', top_n=5, sort=True)
+# Pie & bar charts
+val_pie(df_train, 'CategoryColumn', top_n=5, sort=True)
+val_bar(df_train, 'CategoryColumn', top_n=5, sort=True)
+
+# Time-series plot
+ts_plot(df_train, 'DateColumn', 'ValueColumn', title='Trend')
+# or via instance
+rr.ts_plot('DateColumn', 'ValueColumn', title='Trend')
 ```
 
 ### FastAPI Endpoint
@@ -102,7 +120,7 @@ val_bar(df, 'CategoryColumn', top_n=5, sort=True)
 uvicorn deeprage.api:app --reload
 ```
 
-Send a POST to `/ask` with JSON:
+POST to `/ask` with JSON:
 
 ```json
 {
@@ -113,5 +131,5 @@ Send a POST to `/ask` with JSON:
 
 ---
 
-**R·A·G·E** – Ready, Analytic, Graphical, Exploratory; unleash your data insights!
+**R·A·G·E** – Ready your data, Analyze insights, Graphical plots, Explore freely.
 
