@@ -105,25 +105,24 @@ def val_bar(df, column, top_n=9, sort=False):
 
 
 def ts_plot(df, x_col, y_col, title=None):
-    """Plot a time series for a datetime x_col vs numeric y_col."""
-    plt.rcdefaults()
-    sns.set_style("whitegrid", {
-        "axes.facecolor": "white",    
-        "grid.color": "lightgrey",    
-        "grid.linestyle": "-"         
-    })
-    
-    plt.rc("figure", autolayout=True, figsize=(12, 6))
-    plt.rc("axes", labelweight="bold", labelsize="large", titleweight="bold", titlesize=16)
+    sns.set_style("whitegrid")
 
-    fig, ax = plt.subplots()
-    ax.plot(df[x_col], df[y_col], color='black')
-    
-    ax.set_title(title or f"{y_col} over {x_col}")
-    ax.set_xlabel(x_col)
-    ax.set_ylabel(y_col)
+    fig, ax = plt.subplots(figsize=(12, 6), facecolor="white")
+    ax.set_facecolor("white")  
+
+    ax.plot(df[x_col], df[y_col], color="black")
+
+    ax.grid(True)
+
+    ax.set_title(title or f"{y_col} over {x_col}", weight="bold")
+    ax.set_xlabel(x_col, weight="bold")
+    ax.set_ylabel(y_col, weight="bold")
+
+    plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
+
     plt.tight_layout()
     plt.show()
+
 
 
 # ─── RageReport Class ────────────────────────────────────────────────────────
