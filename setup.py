@@ -4,7 +4,7 @@ setup(
     name='deeprage',
     version='0.1.0',
     description='DeepRage: your all‑in‑one data profiling, visualization, and modeling toolkit',
-    author='Your Name',
+    author='iseedeep',
     packages=find_packages(),  # finds the deeprage/ folder
     install_requires=[
         'pandas',
