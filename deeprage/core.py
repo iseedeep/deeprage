@@ -173,20 +173,41 @@ class RageReport:
         return [c for c in self.df.columns if c.endswith(("_sin", "_cos"))]
 
     def propose_model(self, target):
-    X = self.df.drop(columns=[target])
-    X = X.select_dtypes(include=[np.number])
-    y = self.df[target]
-    is_classif = (y.dtype=='object' or y.nunique()<=10)
-    if is_classif:
-        pipe = Pipeline([('scale',StandardScaler()),('model',LogisticRegression())])
-        metric='ROC-AUC'
-    else:
-        pipe = Pipeline([('scale',StandardScaler()),('model',Ridge())])
-        metric='RMSE'
-    pipe.fit(X,y)
-    return {'type':('classification' if is_classif else 'regression'),
-            'model':pipe.named_steps['model'].__class__.__name__,
-            metric:round(pipe.score(X,y),4)}
+        """
+        Fit a baseline model:
+        - Regression (Ridge) if target is continuous
+        - Classification (LogisticRegression) if target is categorical/integer
+        Returns a dict with model type, name, and score.
+        """
+        X = self.df.drop(columns=[target]).select_dtypes(include=[np.number])
+        y = self.df[target]
+
+        # Decide problem type
+        is_classif = (y.dtype == 'object' or y.nunique() <= 10)
+
+        # Build appropriate pipeline
+        if is_classif:
+            pipe = Pipeline([
+                ('scale', StandardScaler()),
+                ('model', LogisticRegression())
+            ])
+            metric = 'ROC-AUC'
+        else:
+            pipe = Pipeline([
+                ('scale', StandardScaler()),
+                ('model', Ridge())
+            ])
+            metric = 'RMSE'
+
+        # Fit & score
+        pipe.fit(X, y)
+        score = pipe.score(X, y)
+
+        return {
+            'type': 'classification' if is_classif else 'regression',
+            'model': pipe.named_steps['model'].__class__.__name__,
+            metric: round(score, 4)
+        }
 
     def missing_summary(self, *args):
         """
