@@ -174,18 +174,16 @@ class RageReport:
 
     def propose_model(self, target):
         """
-        Fit a baseline model:
-        - Regression (Ridge) if target is continuous
-        - Classification (LogisticRegression) if target is categorical/integer
-        Returns a dict with model type, name, and score.
+        Fit a baseline model and return results as a PrettyTable for readability.
         """
+        # Prepare data: drop non-numeric features and separate X/y
         X = self.df.drop(columns=[target]).select_dtypes(include=[np.number])
         y = self.df[target]
-
+        
         # Decide problem type
         is_classif = (y.dtype == 'object' or y.nunique() <= 10)
-
-        # Build appropriate pipeline
+        
+        # Build pipeline & choose metric
         if is_classif:
             pipe = Pipeline([
                 ('scale', StandardScaler()),
@@ -198,16 +196,20 @@ class RageReport:
                 ('model', Ridge())
             ])
             metric = 'RMSE'
-
+        
         # Fit & score
         pipe.fit(X, y)
         score = pipe.score(X, y)
-
-        return {
-            'type': 'classification' if is_classif else 'regression',
-            '\nmodel': pipe.named_steps['model'].__class__.__name__,
-            metric: round(score, 4)
-        }
+        
+        # Build a PrettyTable for clean output
+        table = PrettyTable()
+        table.field_names = ['Type', 'Model', metric]
+        table.add_row([
+            'classification' if is_classif else 'regression',
+            pipe.named_steps['model'].__class__.__name__,
+            round(score, 4)
+        ])
+        return table
 
     def missing_summary(self, *args):
         """
