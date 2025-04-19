@@ -205,7 +205,7 @@ class RageReport:
 
         return {
             'type': 'classification' if is_classif else 'regression',
-            'model': pipe.named_steps['model'].__class__.__name__,
+            '\nmodel': pipe.named_steps['model'].__class__.__name__,
             metric: round(score, 4)
         }
 
