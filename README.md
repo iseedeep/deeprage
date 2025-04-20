@@ -1,3 +1,5 @@
+![](https://www.dropbox.com/scl/fi/zeoyi3ersxj567edjcyh7/Gray-Red-Bold-History-YouTube-Thumbnail.png?rlkey=ix54ns5omxx6yokv4568x0gbg&st=9rrst97j&raw=1)
+
 # DeepRage
 **Reports · Analytics · Graphical · Explore**
 
