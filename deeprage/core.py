@@ -1,3 +1,5 @@
+# core.py
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -122,7 +124,7 @@ class RageReport:
         )
 
     def clean(self):
-        """Impute missing values: median for numeric, mode for categorical."""
+        """Impute missing: median for numeric (if any), mode for categorical."""
         # coerce numeric‑looking strings
         for col in self.df.columns:
             self.df[col] = pd.to_numeric(self.df[col], errors='ignore')
@@ -156,20 +158,21 @@ class RageReport:
 
     def propose_model(self, target, cv=5, include_shap=False):
         """
-        Try multiple models with CV (stratified for classification) and
-        return a PrettyTable of scores.  Caller should print the table.
+        Try multiple models with CV and return a PrettyTable of scores.
+        Single print only when you do: print(tbl) = rr.propose_model(...)
         """
         # Prepare X, y
         X = self.df.drop(columns=[target])
         y = self.df[target]
 
-        # Determine if classification and label‑encode if so
+        # Detect classification vs regression
         is_classif = (y.dtype == 'object' or y.nunique() <= 10)
         if is_classif:
+            # Label‑encode y so classifiers see ints
             le = LabelEncoder()
             y = le.fit_transform(y)
 
-        # Build preprocessor
+        # Preprocessor
         num_feats = X.select_dtypes(include='number').columns.tolist()
         cat_feats = X.select_dtypes(include=['object', 'category']).columns.tolist()
         pre = ColumnTransformer([
@@ -177,52 +180,54 @@ class RageReport:
             ('cat', OneHotEncoder(handle_unknown='ignore'), cat_feats)
         ])
 
-        # Choose metrics, candidates, and CV splitter
+        # Choose metrics, models, and CV splitter
         if is_classif:
             n_classes = len(np.unique(y))
             if n_classes == 2:
                 scoring, metric_name = 'roc_auc', 'ROC‑AUC'
+                candidates = [
+                    ('LogisticRegression', LogisticRegression(max_iter=1000)),
+                    ('RandomForest',      RandomForestClassifier()),
+                    ('XGBoost',           XGBClassifier(use_label_encoder=False,
+                                                        objective='binary:logistic',
+                                                        eval_metric='logloss'))
+                ]
             else:
                 scoring, metric_name = 'accuracy', 'Accuracy'
-            candidates = [
-                ('LogisticRegression', LogisticRegression(max_iter=1000)),
-                ('RandomForest',      RandomForestClassifier()),
-                ('XGBoost',           XGBClassifier(
-                                         use_label_encoder=False,
-                                         objective='multi:softprob',
-                                         num_class=n_classes,
-                                         eval_metric='mlogloss'
-                                     ))
-            ]
+                # skip XGBoost for multiclass to avoid missing‐class errors
+                candidates = [
+                    ('LogisticRegression', LogisticRegression(max_iter=1000)),
+                    ('RandomForest',      RandomForestClassifier())
+                ]
+            # stratify only when it’s truly classification
             cv_split = StratifiedKFold(n_splits=cv, shuffle=True, random_state=42)
         else:
             scoring, metric_name = 'neg_root_mean_squared_error', 'RMSE'
             candidates = [
-                ('Ridge',        Ridge()),
-                ('RandomForest', RandomForestRegressor()),
-                ('XGBoost',      XGBRegressor())
+                ('Ridge',            Ridge()),
+                ('RandomForest',     RandomForestRegressor()),
+                ('XGBoost',          XGBRegressor())
             ]
             cv_split = cv
 
-        # Evaluate with CV
+        # Evaluate with CV (errors map to nan)
         table = PrettyTable()
         table.field_names = ['Model', metric_name]
         best_score, best_pipe = -np.inf, None
 
         for name, mdl in candidates:
             pipe = Pipeline([('pre', pre), ('model', mdl)])
-            scores = cross_val_score(
-                pipe, X, y,
-                cv=cv_split,
-                scoring=scoring,
-                error_score='raise'
-            )
-            mean_score = -scores.mean() if scoring.startswith('neg_') else scores.mean()
+            # default error_score=np.nan will set failed folds to nan
+            scores = cross_val_score(pipe, X, y, cv=cv_split, scoring=scoring)
+            # average while ignoring nan
+            mean_score = (-np.nanmean(scores)
+                          if scoring.startswith('neg_')
+                          else np.nanmean(scores))
             table.add_row([name, round(mean_score, 4)])
             if mean_score > best_score:
                 best_score, best_pipe = mean_score, pipe
 
-        # Optional SHAP for binary classification
+        # Optional SHAP (binary only)
         if include_shap and is_classif and metric_name == 'ROC‑AUC':
             best_pipe.fit(X, y)
             X_t = best_pipe.named_steps['pre'].transform(X)
@@ -236,11 +241,12 @@ class RageReport:
         """
         Usage:
           .missing_summary('TargetCol')             # train-only
-          .missing_summary(df_test, 'TargetCol')     # train vs. test
+          .missing_summary(df_test, 'TargetCol')    # train vs. test
         """
         if len(args) == 1:
             return generate_missing_summary(self.df, None, args[0])
-        return generate_missing_summary(self.df, args[0], args[1])
+        else:
+            return generate_missing_summary(self.df, args[0], args[1])
 
     def ts_plot(self, x_col, y_col, title=None):
         """Instance wrapper for ts_plot helper."""
