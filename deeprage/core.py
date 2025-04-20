@@ -3,16 +3,19 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import seaborn as sns
+
 from prettytable import PrettyTable
 from ydata_profiling import ProfileReport
+
 from sklearn.impute import SimpleImputer
-from sklearn.preprocessing import OneHotEncoder, StandardScaler, LabelEncoder
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sklearn.compose import ColumnTransformer
 from sklearn.linear_model import Ridge, LogisticRegression
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
-from xgboost import XGBRegressor, XGBClassifier
 from sklearn.pipeline import Pipeline
-from sklearn.model_selection import cross_validate, train_test_split
+from sklearn.model_selection import cross_val_score
+
+from xgboost import XGBClassifier, XGBRegressor
 import shap
 
 # ─── Helper Functions ─────────────────────────────────────────────────────────
@@ -20,7 +23,6 @@ import shap
 def missing_percentage(df, col):
     """Calculate the percentage of missing values for a DataFrame column."""
     return np.round(100 - df[col].count() / len(df) * 100, 1)
-
 
 def generate_missing_summary(df_train, df_test, target):
     """Generate a PrettyTable summarizing missing % and discrete ratio."""
@@ -34,18 +36,17 @@ def generate_missing_summary(df_train, df_test, target):
     ]
     rows = []
     for column in df_train.columns:
-        data_type = str(df_train[column].dtype)
+        dtype = str(df_train[column].dtype)
         train_missing = missing_percentage(df_train, column)
         test_missing = (
             missing_percentage(df_test, column)
             if (df_test is not None and column != target)
             else "NA"
         )
-        discrete_ratio = np.round(df_train[column].nunique() / len(df_train), 4)
-        rows.append([column, data_type, train_missing, test_missing, discrete_ratio])
+        disc_ratio = np.round(df_train[column].nunique() / len(df_train), 4)
+        rows.append([column, dtype, train_missing, test_missing, disc_ratio])
     table.add_rows(rows)
     return table
-
 
 def get_values(df, column, top_n=None, sort=False):
     """
@@ -63,7 +64,6 @@ def get_values(df, column, top_n=None, sort=False):
         vc_df = vc_df.sort_values(by=column)
     return vc_df
 
-
 def val_pie(df, column, top_n=9, sort=False):
     """Plot a black‑themed pie chart of value counts for a categorical column."""
     vc_df = get_values(df, column, top_n, sort)
@@ -77,7 +77,6 @@ def val_pie(df, column, top_n=9, sort=False):
     )
     plt.title(f'{column} Distribution')
     plt.show()
-
 
 def val_bar(df, column, top_n=9, sort=False):
     """Plot a black‑themed bar chart of value counts with annotations."""
@@ -95,41 +94,29 @@ def val_bar(df, column, top_n=9, sort=False):
         x_center = patch.get_x() + patch.get_width() / 2
         height = patch.get_height()
         label = f"{row['Count']:.0f} ({row['Percentage']:.2f}%)"
-        ax.text(
-            x_center,
-            height + max(vc_df['Count']) * 0.02,
-            label,
-            ha='center',
-            va='bottom'
-        )
+        ax.text(x_center, height + max(vc_df['Count']) * 0.02,
+                label, ha='center', va='bottom')
     ax.set_xticklabels(ax.get_xticklabels(), rotation=45)
     plt.title(f'{column} Count Distribution')
     plt.show()
 
-
 def ts_plot(df, x_col, y_col, title=None):
+    """Standalone time‑series plot helper."""
     sns.set_style("whitegrid", {
         "figure.facecolor": "white",
         "axes.facecolor":   "white",
         "grid.color":       "lightgrey"
     })
-
     fig, ax = plt.subplots(figsize=(12, 6))
-    fig.patch.set_facecolor("white")
-    ax.set_facecolor("white")
-
     ax.plot(df[x_col], df[y_col], color="black")
     ax.grid(True)
-
     locator = mdates.AutoDateLocator()
     formatter = mdates.ConciseDateFormatter(locator)
     ax.xaxis.set_major_locator(locator)
     ax.xaxis.set_major_formatter(formatter)
-
     ax.set_title(title or f"{y_col} → {x_col}", weight="bold")
     ax.set_xlabel(x_col, weight="bold")
     ax.set_ylabel(y_col, weight="bold")
-
     plt.tight_layout()
     plt.show()
 
@@ -138,7 +125,7 @@ def ts_plot(df, x_col, y_col, title=None):
 
 class RageReport:
     def __init__(self, df_or_path):
-        """Initialize with a DataFrame or path to CSV."""
+        """Init with DataFrame or CSV path."""
         self.df = (
             pd.read_csv(df_or_path)
             if isinstance(df_or_path, str)
@@ -146,117 +133,123 @@ class RageReport:
         )
 
     def clean(self):
-        """Impute missing values: median for numeric, mode for categorical."""
+        """Impute missing: median for numeric (if any), mode for categorical."""
+        # coerce any numeric‐looking objects
+        for col in self.df.columns:
+            self.df[col] = pd.to_numeric(self.df[col], errors='ignore')
+
         num_cols = self.df.select_dtypes(include='number').columns
         cat_cols = self.df.select_dtypes(include='object').columns
-        num_imp = SimpleImputer(strategy='median')
-        cat_imp = SimpleImputer(strategy='most_frequent')
-        self.df[num_cols] = num_imp.fit_transform(self.df[num_cols])
-        self.df[cat_cols] = cat_imp.fit_transform(self.df[cat_cols])
+
+        if len(num_cols) > 0:
+            num_imp = SimpleImputer(strategy='median')
+            self.df[num_cols] = num_imp.fit_transform(self.df[num_cols])
+
+        if len(cat_cols) > 0:
+            cat_imp = SimpleImputer(strategy='most_frequent')
+            self.df[cat_cols] = cat_imp.fit_transform(self.df[cat_cols])
+
+        # strip column names of accidental whitespace
+        self.df.columns = self.df.columns.str.strip()
         return self
 
     def profile(self, output="report.html"):
-        """Generate a minimal EDA report via ydata‑profiling."""
+        """Full HTML EDA via ydata‑profiling."""
         profile = ProfileReport(self.df, title="DeepRage Profile", minimal=True)
         profile.to_file(output)
         return output
 
     def suggest_features(self):
-        """Auto‑encode datetime columns into cyclical sine/cosine features."""
+        """Auto‑encode datetime columns into sine/cosine cyclical features."""
         for col in self.df.select_dtypes(include='datetime64[ns]'):
-            self.df[f"{col}_sin"] = np.sin(
-                2 * np.pi * self.df[col].dt.dayofyear / 365
-            )
-            self.df[f"{col}_cos"] = np.cos(
-                2 * np.pi * self.df[col].dt.dayofyear / 365
-            )
+            self.df[f"{col}_sin"] = np.sin(2 * np.pi * self.df[col].dt.dayofyear / 365)
+            self.df[f"{col}_cos"] = np.cos(2 * np.pi * self.df[col].dt.dayofyear / 365)
         return [c for c in self.df.columns if c.endswith(("_sin", "_cos"))]
 
-    def propose_model(self, target, cv: int = 5, include_shap: bool = False):
+    def propose_model(self, target, cv=5, include_shap=False):
         """
-        Evaluate a suite of models with preprocessing, cross-validation, and optional SHAP.
-
-        Parameters:
-        - target: name of the target column
-        - cv: number of CV folds
-        - include_shap: if True, computes and plots SHAP summary for best model
+        Try multiple models with CV and return a PrettyTable of scores.
+        For binary classification you can include SHAP explanations.
         """
-        # Split features/target
+        # prepare data
         X = self.df.drop(columns=[target])
         y = self.df[target]
 
-        # Detect classification vs regression
-        is_classif = (y.dtype == 'object' or y.nunique() <= 10)
-
-        # Encode categorical target if needed
-        if is_classif:
-            le = LabelEncoder()
-            y = le.fit_transform(y)
-
-        # Identify numeric & categorical features
-        num_feats = X.select_dtypes(include=[np.number]).columns.tolist()
+        # build preprocessor
+        num_feats = X.select_dtypes(include='number').columns.tolist()
         cat_feats = X.select_dtypes(include=['object', 'category']).columns.tolist()
+        preprocessor = ColumnTransformer([
+            ('num', StandardScaler(), num_feats),
+            ('cat', OneHotEncoder(handle_unknown='ignore'), cat_feats)
+        ])
 
-        # Build preprocessor
-        preprocessor = ColumnTransformer(
-            transformers=[
-                ('num', StandardScaler(), num_feats),
-                ('cat', OneHotEncoder(handle_unknown='ignore'), cat_feats)
-            ], remainder='drop'
-        )
+        is_classif = (y.dtype == 'object' or y.nunique() <= 10)
+        n_classes = y.nunique()
 
-        # Define candidate pipelines
-        candidates = {
-            'Ridge': Pipeline([('pre', preprocessor), ('model', Ridge())]) if not is_classif else None,
-            'RandomForest': Pipeline([
-                ('pre', preprocessor),
-                ('model', RandomForestClassifier() if is_classif else RandomForestRegressor())
-            ]),
-            'XGBoost': Pipeline([
-                ('pre', preprocessor),
-                ('model', XGBClassifier(use_label_encoder=False, eval_metric='logloss') if is_classif else XGBRegressor())
-            ])
-        }
-        # Drop invalid candidate
-        candidates = {k: v for k, v in candidates.items() if v is not None}
+        # choose metric & models
+        if is_classif:
+            if n_classes == 2:
+                scoring = 'roc_auc'
+                metric_name = 'ROC‑AUC'
+            else:
+                scoring = 'accuracy'
+                metric_name = 'Accuracy'
 
-        # Choose scoring
-        scoring = 'roc_auc' if is_classif else 'neg_root_mean_squared_error'
-        metric_name = 'ROC-AUC' if is_classif else 'RMSE'
+            candidates = [
+                ('LogisticRegression', LogisticRegression(max_iter=1000)),
+                ('RandomForest', RandomForestClassifier()),
+                ('XGBoost', XGBClassifier(use_label_encoder=False, eval_metric='logloss'))
+            ]
+        else:
+            scoring = 'neg_root_mean_squared_error'
+            metric_name = 'RMSE'
+            candidates = [
+                ('Ridge', Ridge()),
+                ('RandomForest', RandomForestRegressor()),
+                ('XGBoost', XGBRegressor())
+            ]
 
-        # Cross-validate each
-        results = {}
-        for name, pipe in candidates.items():
-            cv_res = cross_validate(pipe, X, y, cv=cv, scoring=scoring, n_jobs=-1)
-            score = np.mean(cv_res['test_score'])
-            if not is_classif:
-                score = -score
-            results[name] = round(score, 4)
-
-        # Build result table
+        # evaluate with CV
         table = PrettyTable()
         table.field_names = ['Model', metric_name]
-        for model_name, sc in results.items():
-            table.add_row([model_name, sc])
+        best_score, best_pipe = -np.inf, None
 
-        # Fit the best model
-        best_model_name = max(results, key=lambda k: results[k] if is_classif else -results[k])
-        best_pipe = candidates[best_model_name]
-        best_pipe.fit(X, y)
+        for name, model in candidates:
+            pipe = Pipeline([
+                ('pre', preprocessor),
+                ('model', model)
+            ])
+            scores = cross_val_score(pipe, X, y, cv=cv, scoring=scoring)
+            mean_score = -scores.mean() if scoring.startswith('neg_') else scores.mean()
+            table.add_row([name, round(mean_score, 4)])
 
-        # Optional SHAP analysis
-        if include_shap:
-            explainer = shap.Explainer(best_pipe.named_steps['model'],
-                                       preprocessor.transform(X))
-            shap_values = explainer(preprocessor.transform(X))
-            shap.summary_plot(shap_values, features=preprocessor.transform(X))
+            if mean_score > best_score:
+                best_score, best_pipe = mean_score, pipe
+
+        print(table)
+
+        # optional SHAP for binary
+        if include_shap and is_classif and n_classes == 2:
+            best_pipe.fit(X, y)
+            # explain on transformed features
+            X_trans = best_pipe.named_steps['pre'].transform(X)
+            explainer = shap.Explainer(best_pipe.named_steps['model'], X_trans)
+            shap_values = explainer(X_trans)
+            shap.summary_plot(shap_values, features=X, feature_names=X.columns)
 
         return table
 
     def missing_summary(self, *args):
-        """Flexible missing‑data summary."""
-        # existing implementation...
-        ...
+        """
+        Usage:
+          .missing_summary('TargetCol')             # train-only
+          .missing_summary(df_test, 'TargetCol')    # train vs. test
+        """
+        if len(args) == 1:
+            df_test, target = None, args[0]
+        else:
+            df_test, target = args
+        return generate_missing_summary(self.df, df_test, target)
 
     def ts_plot(self, x_col, y_col, title=None):
         """Instance wrapper for ts_plot helper."""
