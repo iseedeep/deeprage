@@ -1,5 +1,3 @@
-# core.py
-
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -90,6 +88,67 @@ def val_bar(df, column, top_n=9, sort=False):
         ax.text(x_c, h + vc_df['Count'].max() * 0.02, lbl, ha='center', va='bottom')
     ax.set_xticklabels(ax.get_xticklabels(), rotation=45)
     plt.title(f'{column} Count Distribution')
+    plt.show()
+
+def val_hist(df, column, bins=30, kde=False):
+    """
+    Plot a black‑themed histogram (and optional KDE) for a numeric column,
+    and print out a PrettyTable of summary statistics.
+    """
+    # Drop NAs
+    series = df[column].dropna()
+    
+    # Compute summary stats
+    stats = {
+        'count':  series.count(),
+        'mean':   series.mean(),
+        'std':    series.std(),
+        'min':    series.min(),
+        '25%':    series.quantile(0.25),
+        '50%':    series.median(),
+        '75%':    series.quantile(0.75),
+        'max':    series.max()
+    }
+    
+    # Print table
+    table = PrettyTable()
+    table.field_names = ['Statistic', 'Value']
+    for name, val in stats.items():
+        table.add_row([name, round(val, 4)])
+    print(table)
+    
+    # Plot
+    sns.set_style("whitegrid", {
+        "figure.facecolor": "white",
+        "axes.facecolor":   "white",
+        "grid.color":       "lightgrey"
+    })
+    fig, ax = plt.subplots(figsize=(12, 6))
+    
+    # Histogram
+    sns.histplot(
+        series,
+        bins=bins,
+        stat='count',
+        kde=kde,
+        element='step',
+        fill=True,
+        color='black',
+        edgecolor='grey',
+        ax=ax
+    )
+    if kde:
+        # bump KDE line up to grey for contrast
+        for line in ax.lines:
+            line.set_color('grey')
+            line.set_linewidth(2)
+    
+    # Formatting
+    ax.set_title(f"{column} Distribution", weight="bold")
+    ax.set_xlabel(column, weight="bold")
+    ax.set_ylabel("Count", weight="bold")
+    plt.xticks(rotation=45)
+    plt.tight_layout()
     plt.show()
 
 def ts_plot(df, x_col, y_col, title=None):
