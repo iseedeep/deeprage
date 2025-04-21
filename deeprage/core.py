@@ -7,6 +7,8 @@ import seaborn as sns
 from prettytable import PrettyTable
 from ydata_profiling import ProfileReport
 
+from matplotlib.ticker import PercentFormatter
+
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import OneHotEncoder, StandardScaler, LabelEncoder
 from sklearn.compose import ColumnTransformer
@@ -90,15 +92,17 @@ def val_bar(df, column, top_n=9, sort=False):
     plt.title(f'{column} Count Distribution')
     plt.show()
 
-def val_hist(df, column, bins=30, kde=False):
+def val_hist(df, column, bins=30, kde=False, freq=False):
     """
-    Plot a black‑themed histogram (and optional KDE) for a numeric column,
-    and print out a PrettyTable of summary statistics.
+    Plot a histogram for a numeric column:
+      – freq=False → y axis is count
+      – freq=True  → y axis is relative frequency (%) 
+    Also prints a PrettyTable of summary stats.
     """
-    # Drop NAs
+    # Prepare data
     series = df[column].dropna()
     
-    # Compute summary stats
+    # Summary stats
     stats = {
         'count':  series.count(),
         'mean':   series.mean(),
@@ -109,15 +113,12 @@ def val_hist(df, column, bins=30, kde=False):
         '75%':    series.quantile(0.75),
         'max':    series.max()
     }
-    
-    # Print table
-    table = PrettyTable()
-    table.field_names = ['Statistic', 'Value']
-    for name, val in stats.items():
-        table.add_row([name, round(val, 4)])
+    table = PrettyTable(['Statistic', 'Value'])
+    for k, v in stats.items():
+        table.add_row([k, round(v, 4)])
     print(table)
     
-    # Plot
+    # Plot setup
     sns.set_style("whitegrid", {
         "figure.facecolor": "white",
         "axes.facecolor":   "white",
@@ -125,11 +126,19 @@ def val_hist(df, column, bins=30, kde=False):
     })
     fig, ax = plt.subplots(figsize=(12, 6))
     
-    # Histogram
+    # Choose stat mode
+    if freq:
+        stat = 'probability'
+        ylabel = 'Frequency (%)'
+    else:
+        stat = 'count'
+        ylabel = 'Count'
+    
+    # Draw histogram (and optional KDE)
     sns.histplot(
         series,
         bins=bins,
-        stat='count',
+        stat=stat,
         kde=kde,
         element='step',
         fill=True,
@@ -137,16 +146,21 @@ def val_hist(df, column, bins=30, kde=False):
         edgecolor='grey',
         ax=ax
     )
+    
+    # If freq mode, format y‑axis as percentages
+    if freq:
+        ax.yaxis.set_major_formatter(PercentFormatter(xmax=1))
+    
+    # Tweak KDE line if present
     if kde:
-        # bump KDE line up to grey for contrast
         for line in ax.lines:
             line.set_color('grey')
             line.set_linewidth(2)
     
-    # Formatting
+    # Labels & layout
     ax.set_title(f"{column} Distribution", weight="bold")
     ax.set_xlabel(column, weight="bold")
-    ax.set_ylabel("Count", weight="bold")
+    ax.set_ylabel(ylabel, weight="bold")
     plt.xticks(rotation=45)
     plt.tight_layout()
     plt.show()
