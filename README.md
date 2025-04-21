@@ -96,12 +96,12 @@ DeepRage is an all‑in‑one Python toolkit for EDA, profiling, visualization, 
 
 ## 💻 Usage
 
-### Command‑Line Interface
+**Command‑Line Interface**
 ```bash
 # Generate HTML EDA report
 deeprage profile data.csv
 
-# Missing-data summary
+# Missing‑data summary
 deeprage missing_summary train.csv [test.csv] TargetColumn
 
 # Fit baseline model
@@ -111,50 +111,56 @@ deeprage model data.csv TargetColumn --cv 5 --shap
 deeprage pie data.csv CategoryColumn --top_n 5 --sort
 deeprage bar data.csv CategoryColumn --top_n 5 --sort
 
-# Time-series plot
+# Time‑series plot
 deeprage ts data.csv DateColumn ValueColumn --title "Trend"
+
+# **Numeric histogram** (counts/KDE or frequency/KDE)
+deeprage hist data.csv NumericColumn --bins 30 [--kde] [--freq]
 ```
 
 ### Jupyter Notebook Magics
 ```python
 %load_ext deeprage.notebook
+
 %deeprage_profile data.csv
-%deeprage_pie data.csv CategoryColumn
-%deeprage_bar data.csv CategoryColumn
-%deeprage_ts data.csv DateColumn ValueColumn "Trend"
+%deeprage_pie    data.csv CategoryColumn
+%deeprage_bar    data.csv CategoryColumn
+%deeprage_ts     data.csv DateColumn ValueColumn "Trend"
 %deeprage_missing train.csv test.csv TargetColumn
+%deeprage_hist   data.csv NumericColumn --bins=30 --kde --freq
 ```
 
 ### Python API
 
 ```python
 from deeprage.core import (
-    RageReport, get_values, val_pie, val_bar, ts_plot
+    RageReport, get_values, val_pie, val_bar, ts_plot, val_hist
 )
 import pandas as pd
 
-# 1. Load data and clean missing values (median for numeric, mode for categorical)
-df_train = pd.read_csv('train.csv')
-rr = RageReport(df_train).clean()
+# 1. Load & clean
+df = pd.read_csv('data.csv')
+rr = RageReport(df).clean()
 
-# 2. Missing‑data summary: train-only diagnostics (Feature, dtype, missing%, unique ratio)
-tbl = rr.missing_summary('TargetColumn')
-print(tbl)
+# 2. Missing‑data summary
+print(rr.missing_summary('TargetColumn'))
 
-# 3. Modeling: fit baseline pipelines (Ridge/Logistic, RF, XGBoost) with CV=5 and display SHAP plot if requested
+# 3. Modeling w/ CV=5 + SHAP
 rr.propose_model('TargetColumn', cv=5, include_shap=True)
 
-# 4. Categorical distributions: pie chart for top 5 categories, sorted by count
-val_pie(df_train, 'CategoryColumn', top_n=5, sort=True)
+# 4. Categorical distributions
+val_pie(df, 'CategoryColumn', top_n=5, sort=True)
+val_bar(df, 'CategoryColumn', top_n=5, sort=True)
 
-# 5. Categorical distributions: bar chart with counts & percentages
-val_bar(df_train, 'CategoryColumn', top_n=5, sort=True)
-
-# 6. Time‑series plotting: standalone function for datetime vs numeric trend
-ts_plot(df_train, 'DateColumn', 'ValueColumn', title='Trend')
-
-# 7. Time‑series plotting via instance wrapper (same as ts_plot above)
+# 5. Time‑series plotting
+ts_plot(df, 'DateColumn', 'ValueColumn', title='Trend')
 rr.ts_plot('DateColumn', 'ValueColumn', title='Trend')
+
+# 6. **Numeric histogram**
+#    – raw counts + KDE
+val_hist(df, 'NumericColumn', bins=30, kde=True,  freq=False)
+#    – percent frequencies (no KDE)
+val_hist(df, 'NumericColumn', bins=20, kde=False, freq=True)
 ```
 
 ### FastAPI Endpoint
