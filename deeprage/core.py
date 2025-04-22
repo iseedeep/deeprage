@@ -1,3 +1,4 @@
+import math
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -162,6 +163,54 @@ def val_hist(df, column, bins=30, kde=False, freq=False):
     ax.set_xlabel(column, weight="bold")
     ax.set_ylabel(ylabel, weight="bold")
     plt.xticks(rotation=45)
+    plt.tight_layout()
+    plt.show()
+
+def val_all_hist(df, bins=30, kde=False, freq=False, n_cols=3):
+    """
+    Plot histograms for all numeric columns in a grid layout.
+    
+    Parameters:
+      df       – DataFrame
+      bins     – number of bins per histogram
+      kde      – whether to overlay a KDE curve
+      freq     – if True, y‑axis shows percentage; otherwise raw counts
+      n_cols   – how many subplots per row
+    """
+    num_cols = df.select_dtypes(include='number').columns.tolist()
+    if not num_cols:
+        print("No numeric columns to plot.")
+        return
+
+    n = len(num_cols)
+    n_rows = math.ceil(n / n_cols)
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(n_cols*5, n_rows*4))
+    axes = axes.flatten()
+
+    for ax, col in zip(axes, num_cols):
+        series = df[col].dropna()
+        stat = 'probability' if freq else 'count'
+        sns.histplot(
+            series,
+            bins=bins,
+            stat=stat,
+            kde=kde,
+            element='step',
+            fill=True,
+            color='black',
+            edgecolor='grey',
+            ax=ax
+        )
+        if freq:
+            ax.yaxis.set_major_formatter(PercentFormatter(xmax=1))
+        ax.set_title(col, weight="bold")
+        ax.set_xlabel('')
+        ax.set_ylabel('Frequency (%)' if freq else 'Count')
+
+    # remove any extra axes
+    for ax in axes[n:]:
+        fig.delaxes(ax)
+
     plt.tight_layout()
     plt.show()
 
