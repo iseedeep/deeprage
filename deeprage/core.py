@@ -96,17 +96,34 @@ def val_pie(df, column, top_n=9, sort=False):
     plt.show()
 
 def val_bar(df, column, top_n=9, sort=False):
-    """Plot a black‑themed bar chart of value counts with annotations."""
+    """Plot bar chart of value counts with annotations."""
     vc_df = get_values(df, column, top_n, sort).sort_values('Count', ascending=True)
     fig, ax = plt.subplots(figsize=(12, 6))
-    sns.barplot(data=vc_df, x=column, y='Count', palette='Greys')
+    
+    # Plot the bar chart
+    sns.barplot(data=vc_df, x=column, y='Count', palette='Greys', ax=ax)
+    
+    # Add annotations with better formatting
     for patch, (_, row) in zip(ax.patches, vc_df.iterrows()):
         x_c = patch.get_x() + patch.get_width() / 2
         h = patch.get_height()
         lbl = f"{row['Count']:.0f} ({row['Percentage']:.2f}%)"
-        ax.text(x_c, h + vc_df['Count'].max() * 0.02, lbl, ha='center', va='bottom')
-    ax.set_xticklabels(ax.get_xticklabels(), rotation=45)
-    plt.title(f'{column} Count Distribution')
+        ax.text(
+            x_c, h + vc_df['Count'].max() * 0.02, lbl, ha='center', va='bottom',
+            fontsize=12, fontweight='bold', color='white',
+            path_effects=[plt.matplotlib.patheffects.withStroke(linewidth=3, foreground='black')]
+        )
+    
+    # Improve ticks and labels
+    ax.set_xticklabels(ax.get_xticklabels(), rotation=45, fontsize=12, fontweight='bold')
+    ax.set_yticklabels([f'{int(i)}' for i in ax.get_yticks()], fontsize=12, fontweight='bold')
+    
+    # Set title and improve grid
+    ax.set_title(f'{column} Count Distribution', fontsize=16, fontweight='bold')
+    ax.grid(True, linestyle='--', alpha=0.5)
+    
+    # Show the plot
+    plt.tight_layout()
     plt.show()
 
 def val_hist(df, column, bins=30, kde=False, freq=False):
@@ -135,7 +152,7 @@ def val_hist(df, column, bins=30, kde=False, freq=False):
         table.add_row([k, round(v, 4)])
     print(table)
     
-    # Plot setup
+    # Plot setup with enhanced style
     sns.set_style("whitegrid", {
         "figure.facecolor": "white",
         "axes.facecolor":   "white",
@@ -144,12 +161,8 @@ def val_hist(df, column, bins=30, kde=False, freq=False):
     fig, ax = plt.subplots(figsize=(12, 6))
     
     # Choose stat mode
-    if freq:
-        stat = 'probability'
-        ylabel = 'Frequency (%)'
-    else:
-        stat = 'count'
-        ylabel = 'Count'
+    stat = 'probability' if freq else 'count'
+    ylabel = 'Frequency (%)' if freq else 'Count'
     
     # Draw histogram (and optional KDE)
     sns.histplot(
@@ -168,17 +181,19 @@ def val_hist(df, column, bins=30, kde=False, freq=False):
     if freq:
         ax.yaxis.set_major_formatter(PercentFormatter(xmax=1))
     
-    # Tweak KDE line if present
+    # If KDE is enabled, adjust line properties
     if kde:
         for line in ax.lines:
             line.set_color('grey')
             line.set_linewidth(2)
     
-    # Labels & layout
-    ax.set_title(f"{column} Distribution", weight="bold")
-    ax.set_xlabel(column, weight="bold")
-    ax.set_ylabel(ylabel, weight="bold")
-    plt.xticks(rotation=45)
+    # Add customized labels & layout
+    ax.set_title(f"{column} Distribution", weight="bold", fontsize=16)
+    ax.set_xlabel(column, weight="bold", fontsize=14)
+    ax.set_ylabel(ylabel, weight="bold", fontsize=14)
+    
+    # Rotate x-axis labels for better readability
+    plt.xticks(rotation=45, fontsize=12)
     plt.tight_layout()
     plt.show()
 
@@ -206,6 +221,9 @@ def val_all_hist(df, bins=30, kde=False, freq=False, n_cols=3):
     for ax, col in zip(axes, num_cols):
         series = df[col].dropna()
         stat = 'probability' if freq else 'count'
+        ylabel = 'Frequency (%)' if freq else 'Count'
+        
+        # Plot histogram with optional KDE
         sns.histplot(
             series,
             bins=bins,
@@ -217,13 +235,17 @@ def val_all_hist(df, bins=30, kde=False, freq=False, n_cols=3):
             edgecolor='grey',
             ax=ax
         )
+        
+        # Format y-axis as percentage if needed
         if freq:
             ax.yaxis.set_major_formatter(PercentFormatter(xmax=1))
-        ax.set_title(col, weight="bold")
-        ax.set_xlabel('')
-        ax.set_ylabel('Frequency (%)' if freq else 'Count')
-
-    # remove any extra axes
+        
+        # Customize the appearance of each subplot
+        ax.set_title(col, weight="bold", fontsize=14)
+        ax.set_xlabel('', fontsize=12)
+        ax.set_ylabel(ylabel, fontsize=12)
+    
+    # Remove any extra axes if the number of columns is not a perfect multiple
     for ax in axes[n:]:
         fig.delaxes(ax)
 
