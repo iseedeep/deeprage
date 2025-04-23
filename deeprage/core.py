@@ -66,16 +66,20 @@ def get_values(df, column, top_n=None, sort=False):
     return vc_df
 
 def val_pie(df, column, top_n=9, sort=False):
-    """Plot a black‑themed pie chart of value counts for a categorical column."""
+    """Plot a black‑themed pie chart of value counts for a categorical column with percentages."""
     vc_df = get_values(df, column, top_n, sort)
     colors = plt.cm.Greys(np.linspace(0.9, 0.3, len(vc_df)))
+    
+    # Plot pie chart
     vc_df.set_index(column).plot.pie(
         figsize=(5, 5),
         y='Count',
         ylabel='',
         legend=False,
-        colors=colors
+        colors=colors,
+        autopct='%1.1f%%'  
     )
+    
     plt.title(f'{column} Distribution')
     plt.show()
 
