@@ -66,21 +66,33 @@ def get_values(df, column, top_n=None, sort=False):
     return vc_df
 
 def val_pie(df, column, top_n=9, sort=False):
-    """Plot a black‑themed pie chart of value counts for a categorical column with percentages."""
+    """Plot a black‑themed pie chart of value counts for a categorical column."""
     vc_df = get_values(df, column, top_n, sort)
     colors = plt.cm.Greys(np.linspace(0.9, 0.3, len(vc_df)))
     
     # Plot pie chart
-    vc_df.set_index(column).plot.pie(
-        figsize=(5, 5),
+    ax = vc_df.set_index(column).plot.pie(
+        figsize=(6, 6),
         y='Count',
         ylabel='',
         legend=False,
         colors=colors,
-        autopct='%1.1f%%'  
+        autopct='%1.1f%%',  
+        startangle=90, 
+        wedgeprops={'edgecolor': 'black', 'linewidth': 1, 'linestyle': '--'},  # Add edge color and styling
     )
-    
-    plt.title(f'{column} Distribution')
+
+    # Customize text labels' appearance
+    for text in ax.texts:
+        text.set_fontsize(12)  # Increase font size
+        text.set_fontweight('bold')  # Make text bold
+        text.set_color('white')  # Change text color to white for visibility
+        text.set_path_effects([
+            plt.matplotlib.patheffects.withStroke(linewidth=3, foreground='black')  # Add shadow to text
+        ])
+
+    # Set title and display the plot
+    plt.title(f'{column} Distribution', fontsize=14, fontweight='bold')
     plt.show()
 
 def val_bar(df, column, top_n=9, sort=False):
