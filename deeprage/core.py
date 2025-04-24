@@ -263,49 +263,59 @@ def ts_plot(
     figsize: tuple[int, int] = (12, 6),
 ):
     """
-    Advanced time-series plot.
+    Advanced time-series plot that:
+      • auto-parses mixed date formats (YYYY or YYYY-MM-DD etc)
+      • optionally resamples (M/W/D…) and smooths (rolling mean)
+      • handles single or multiple y-series
+      • smart date locators + last-point annotation
 
     Parameters
     ----------
-    df           : pandas.DataFrame
-    x_col        : name of datetime column (or existing datetime index name)
-    y_col        : single column name or list of names to plot
-    title        : plot title (defaults to "y_col over time")
-    resample     : pandas offset alias (e.g. 'M','W'); if set, does df.resample(...).mean()
-    smooth       : integer window for rolling mean smoothing
-    annotate_last: if True, labels each series’ last point
-    figsize      : figure size tuple
-
-    Example
-    -------
-    ts_plot(df, 'release_date', 'count', resample='M', smooth=3,
-            annotate_last=True,
-            title='Monthly Album Releases (3-mo avg)')
+    df           : pd.DataFrame
+    x_col        : name of your date column
+    y_col        : str or list of str for one or more series
+    title        : plot title
+    resample     : e.g. 'M' for monthly, 'W' for weekly
+    smooth       : int window for rolling average
+    annotate_last: label each series’ last point
+    figsize      : tuple, e.g. (12,6)
     """
-    # ── Prepare the data ────────────────────────────────────────────────────
+    # ―― 1. Copy & parse dates ――
     df = df.copy()
-    # Ensure datetime index
-    if x_col in df.columns:
-        df[x_col] = pd.to_datetime(df[x_col])
-        df.set_index(x_col, inplace=True)
-    else:
-        df.index = pd.to_datetime(df.index)
+    col = df[x_col]
 
-    # Subset the series to plot
+    # first: try generic parsing
+    dates = pd.to_datetime(col, errors='coerce', infer_datetime_format=True)
+    # fallback: any pure-YYYY strings?
+    mask_year = col.astype(str).str.match(r'^\d{4}$')
+    if mask_year.any():
+        dates.loc[mask_year] = pd.to_datetime(col[mask_year], format='%Y')
+
+    # warn if anything still bad
+    if dates.isna().any():
+        n_bad = dates.isna().sum()
+        print(f"⚠️  {n_bad} invalid dates coerced to NaT in '{x_col}' and will be dropped")
+    df[x_col] = dates.dropna()
+    df = df.loc[df[x_col].notna()]
+
+    # set index
+    df.set_index(x_col, inplace=True)
+
+    # ―― 2. Pick y data ――
     if isinstance(y_col, (list, tuple)):
         data = df[y_col].copy()
     else:
         data = df[[y_col]].copy()
 
-    # Resample if requested
+    # resample?
     if resample:
         data = data.resample(resample).mean()
 
-    # Smooth if requested
+    # smooth?
     if smooth and smooth > 1:
         data = data.rolling(window=smooth, min_periods=1, center=True).mean()
 
-    # ── Styling & Plot ─────────────────────────────────────────────────────
+    # ―― 3. Plot ――
     sns.set_style("whitegrid", {
         "figure.facecolor": "white",
         "axes.facecolor":   "white",
@@ -313,30 +323,25 @@ def ts_plot(
     })
     fig, ax = plt.subplots(figsize=figsize)
 
-    # Plot each column
     for col in data.columns:
         ax.plot(
-            data.index,
-            data[col],
-            label=str(col),
-            linewidth=2,
-            marker='o',
-            markersize=4
+            data.index, data[col],
+            label=str(col), marker='o', markersize=4, linewidth=2
         )
 
-    # Legend & labels
-    ax.legend(title="Series", loc="upper left")
+    # labels & legend
     ax.set_title(title or f"{', '.join(data.columns)} over time", weight="bold")
     ax.set_xlabel(x_col, weight="bold")
     ax.set_ylabel("Value", weight="bold")
+    ax.legend(title="Series", loc="upper left")
 
-    # Smart date formatting
+    # date formatting
     locator = mdates.AutoDateLocator()
     ax.xaxis.set_major_locator(locator)
     ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(locator))
     fig.autofmt_xdate()
 
-    # Optional: annotate the last point of each series
+    # annotate last
     if annotate_last:
         for col in data.columns:
             x0 = data.index[-1]
