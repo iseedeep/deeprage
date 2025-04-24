@@ -319,83 +319,100 @@ class RageReport:
     def propose_model(self, target, cv=5, include_shap=False):
         """
         Try multiple models with CV and return a PrettyTable of scores.
-        Single print only when you do: print(tbl) = rr.propose_model(...)
+        - Ridge now uses solver='lsqr' (sparse-friendly).
+        - Any fit errors are caught and reported per model.
+        - If target is missing, raises a clear ValueError.
         """
-        # Prepare X, y
+        # 1) ensure target exists
+        if target not in self.df.columns:
+            raise ValueError(
+                f"Target column {target!r} not found. Available columns: "
+                f"{', '.join(self.df.columns)}"
+            )
+
+        # 2) prepare X, y
         X = self.df.drop(columns=[target])
         y = self.df[target]
 
-        # Detect classification vs regression
+        # 3) detect problem type
         is_classif = (y.dtype == 'object' or y.nunique() <= 10)
         if is_classif:
-            # Label‑encode y so classifiers see ints
             le = LabelEncoder()
             y = le.fit_transform(y)
 
-        # Preprocessor
+        # 4) preprocessor
         num_feats = X.select_dtypes(include='number').columns.tolist()
         cat_feats = X.select_dtypes(include=['object', 'category']).columns.tolist()
         pre = ColumnTransformer([
             ('num', StandardScaler(), num_feats),
-            ('cat', OneHotEncoder(handle_unknown='ignore'), cat_feats)
+            ('cat', OneHotEncoder(handle_unknown='ignore', sparse=True), cat_feats)
         ])
 
-        # Choose metrics, models, and CV splitter
+        # 5) choose metrics, models, splitter
         if is_classif:
+            # binary vs multiclass
             n_classes = len(np.unique(y))
             if n_classes == 2:
-                scoring, metric_name = 'roc_auc', 'ROC‑AUC'
+                scoring, metric = 'roc_auc', 'ROC-AUC'
                 candidates = [
-                    ('LogisticRegression', LogisticRegression(max_iter=1000)),
-                    ('RandomForest',      RandomForestClassifier()),
-                    ('XGBoost',           XGBClassifier(use_label_encoder=False,
-                                                        objective='binary:logistic',
-                                                        eval_metric='logloss'))
+                    ('Logistic', LogisticRegression(max_iter=1000)),
+                    ('Forest',   RandomForestClassifier()),
+                    ('XGBoost',  XGBClassifier(use_label_encoder=False,
+                                                objective='binary:logistic',
+                                                eval_metric='logloss'))
                 ]
             else:
-                scoring, metric_name = 'accuracy', 'Accuracy'
-                # skip XGBoost for multiclass to avoid missing‐class errors
+                scoring, metric = 'accuracy', 'Accuracy'
                 candidates = [
-                    ('LogisticRegression', LogisticRegression(max_iter=1000)),
-                    ('RandomForest',      RandomForestClassifier())
+                    ('Logistic', LogisticRegression(max_iter=1000)),
+                    ('Forest',   RandomForestClassifier())
                 ]
-            # stratify only when it’s truly classification
             cv_split = StratifiedKFold(n_splits=cv, shuffle=True, random_state=42)
         else:
-            scoring, metric_name = 'neg_root_mean_squared_error', 'RMSE'
+            scoring, metric = 'neg_root_mean_squared_error', 'RMSE'
             candidates = [
-                ('Ridge (svd)',      Ridge(solver='svd')), 
-                ('RandomForest',     RandomForestRegressor()),
+                ('Ridge (lsqr)',     Ridge(solver='lsqr')),   # sparse-friendly
+                ('Forest',           RandomForestRegressor()),
                 ('XGBoost',          XGBRegressor())
             ]
             cv_split = cv
 
-        # Evaluate with CV (errors map to nan)
-        table = PrettyTable()
-        table.field_names = ['Model', metric_name]
+        # 6) evaluate with CV, catching errors
+        from prettytable import PrettyTable
+        table = PrettyTable(['Model', metric])
         best_score, best_pipe = -np.inf, None
-
         for name, mdl in candidates:
-            pipe = Pipeline([('pre', pre), ('model', mdl)])
-            # default error_score=np.nan will set failed folds to nan
-            scores = cross_val_score(pipe, X, y, cv=cv_split, scoring=scoring)
-            # average while ignoring nan
-            mean_score = (-np.nanmean(scores)
-                          if scoring.startswith('neg_')
-                          else np.nanmean(scores))
-            table.add_row([name, round(mean_score, 4)])
-            if mean_score > best_score:
-                best_score, best_pipe = mean_score, pipe
+            try:
+                pipe = Pipeline([('pre', pre), ('model', mdl)])
+                scores = cross_val_score(pipe, X, y,
+                                         cv=cv_split,
+                                         scoring=scoring)
+                # flip if negative scoring
+                mean_score = (-np.nanmean(scores)
+                              if scoring.startswith('neg_')
+                              else np.nanmean(scores))
+                table.add_row([name, round(mean_score, 4)])
+                if mean_score > best_score:
+                    best_score, best_pipe = mean_score, pipe
+            except Exception as e:
+                # report and keep going
+                table.add_row([name, 'FAIL'])
+                print(f"→ {name} failed: {e}")
 
-        # Optional SHAP (binary only)
-        if include_shap and is_classif and metric_name == 'ROC‑AUC':
+        # 7) if all failed, warn
+        if best_pipe is None:
+            print("⚠️ All candidate models failed. Check data, types, or configs.")
+            return table
+
+        # 8) optional SHAP (binary ROC-AUC only)
+        if include_shap and is_classif and metric == 'ROC-AUC':
             best_pipe.fit(X, y)
             X_t = best_pipe.named_steps['pre'].transform(X)
             explainer = shap.Explainer(best_pipe.named_steps['model'], X_t)
-            shap_values = explainer(X_t)
-            shap.summary_plot(shap_values, features=X, feature_names=X.columns)
+            shap.summary_plot(explainer(X_t), features=X, feature_names=X.columns)
 
         return table
+
 
     def missing_summary(self, *args):
         """
