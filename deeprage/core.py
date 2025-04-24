@@ -263,59 +263,39 @@ def ts_plot(
     figsize: tuple[int, int] = (12, 6),
 ):
     """
-    Advanced time-series plot that:
-      • auto-parses mixed date formats (YYYY or YYYY-MM-DD etc)
-      • optionally resamples (M/W/D…) and smooths (rolling mean)
-      • handles single or multiple y-series
-      • smart date locators + last-point annotation
+    Time-series / timeline plot.
 
-    Parameters
-    ----------
-    df           : pd.DataFrame
-    x_col        : name of your date column
-    y_col        : str or list of str for one or more series
-    title        : plot title
-    resample     : e.g. 'M' for monthly, 'W' for weekly
-    smooth       : int window for rolling average
-    annotate_last: label each series’ last point
-    figsize      : tuple, e.g. (12,6)
+    • Parses mixed date formats (YYYY, YYYY-MM-DD, ISO…)
+    • If y_col is numeric: line + marker plot (with optional resample/smooth)
+    • If y_col is non-numeric: tidy scatter timeline with labels
+    • Optional last-point annotation
     """
-    # ―― 1. Copy & parse dates ――
+    # ── 1) Copy & parse dates ────────────────────────────────────────────────
     df = df.copy()
-    col = df[x_col]
+    raw_dates = df[x_col].astype(str)
 
-    # first: try generic parsing
-    dates = pd.to_datetime(col, errors='coerce', infer_datetime_format=True)
-    # fallback: any pure-YYYY strings?
-    mask_year = col.astype(str).str.match(r'^\d{4}$')
-    if mask_year.any():
-        dates.loc[mask_year] = pd.to_datetime(col[mask_year], format='%Y')
+    # Generic parse + year-only fallback
+    dates = pd.to_datetime(raw_dates, errors='coerce', infer_datetime_format=True)
+    year_mask = raw_dates.str.match(r'^\d{4}$')
+    if year_mask.any():
+        dates.loc[year_mask] = pd.to_datetime(raw_dates[year_mask], format='%Y')
 
-    # warn if anything still bad
     if dates.isna().any():
-        n_bad = dates.isna().sum()
-        print(f"⚠️  {n_bad} invalid dates coerced to NaT in '{x_col}' and will be dropped")
+        print(f"⚠️  Coerced {dates.isna().sum()} bad dates in '{x_col}' → dropped")
     df[x_col] = dates.dropna()
     df = df.loc[df[x_col].notna()]
 
-    # set index
+    # Set datetime index
     df.set_index(x_col, inplace=True)
 
-    # ―― 2. Pick y data ――
+    # ── 2) Select & detect series type ───────────────────────────────────────
+    # Single-series only
     if isinstance(y_col, (list, tuple)):
-        data = df[y_col].copy()
-    else:
-        data = df[[y_col]].copy()
+        raise ValueError("ts_plot only supports a single y_col; got list/tuple")
 
-    # resample?
-    if resample:
-        data = data.resample(resample).mean()
+    series = df[y_col]
+    is_numeric = pd.api.types.is_numeric_dtype(series)
 
-    # smooth?
-    if smooth and smooth > 1:
-        data = data.rolling(window=smooth, min_periods=1, center=True).mean()
-
-    # ―― 3. Plot ――
     sns.set_style("whitegrid", {
         "figure.facecolor": "white",
         "axes.facecolor":   "white",
@@ -323,40 +303,63 @@ def ts_plot(
     })
     fig, ax = plt.subplots(figsize=figsize)
 
-    for col in data.columns:
+    if is_numeric:
+        # ── Numeric path: resample / smooth / line plot ──────────────────────
+        data = series.to_frame()
+
+        if resample:
+            data = data.resample(resample).mean()
+        if smooth and smooth > 1:
+            data = data.rolling(window=smooth, min_periods=1, center=True).mean()
+
         ax.plot(
-            data.index, data[col],
-            label=str(col), marker='o', markersize=4, linewidth=2
+            data.index, data[y_col],
+            marker='o', linewidth=2, markersize=4, color='black'
         )
+        ax.set_ylabel("Value", weight="bold")
 
-    # labels & legend
-    ax.set_title(title or f"{', '.join(data.columns)} over time", weight="bold")
+    else:
+        # ── Timeline path: map each unique label to an integer code ──────────
+        cats = pd.Categorical(series)
+        codes = cats.codes
+        ax.scatter(df.index, codes, marker='o', s=50, color='black')
+        for x, y in zip(df.index, codes):
+            ax.vlines(x, ymin=-0.5, ymax=y, color='grey', alpha=0.3)
+
+        # label the y-axis with your album titles
+        ax.set_yticks(range(len(cats.categories)))
+        ax.set_yticklabels(cats.categories)
+        ax.set_ylabel(y_col, weight="bold")
+
+    # ── 3) Common styling ───────────────────────────────────────────────────
+    ax.set_title(title or f"{y_col} over time", weight="bold")
     ax.set_xlabel(x_col, weight="bold")
-    ax.set_ylabel("Value", weight="bold")
-    ax.legend(title="Series", loc="upper left")
 
-    # date formatting
+    # Smart date ticks
     locator = mdates.AutoDateLocator()
     ax.xaxis.set_major_locator(locator)
     ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(locator))
     fig.autofmt_xdate()
 
-    # annotate last
+    # ── 4) Annotate last point (optional) ──────────────────────────────────
     if annotate_last:
-        for col in data.columns:
-            x0 = data.index[-1]
-            y0 = data[col].iloc[-1]
-            ax.annotate(
-                f"{y0:.2f}",
-                xy=(x0, y0),
-                xytext=(5, 5),
-                textcoords="offset points",
-                fontsize=9,
-                weight="bold"
-            )
+        if is_numeric:
+            x0, y0 = data.index[-1], data[y_col].iloc[-1]
+        else:
+            x0 = df.index[-1]
+            y0 = pd.Categorical(series).codes[-1]
+        ax.annotate(
+            f"{y0:.2f}" if is_numeric else cats.categories[y0],
+            xy=(x0, y0),
+            xytext=(5, 5),
+            textcoords="offset points",
+            fontsize=9,
+            weight="bold"
+        )
 
     plt.tight_layout()
     plt.show()
+
 
 
 # ─── RageReport Class ────────────────────────────────────────────────────────
