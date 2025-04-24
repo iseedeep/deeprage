@@ -252,22 +252,104 @@ def val_all_hist(df, bins=30, kde=False, freq=False, n_cols=3):
     plt.tight_layout()
     plt.show()
 
-def ts_plot(df, x_col, y_col, title=None):
-    """Standalone time‑series plot helper."""
+def ts_plot(
+    df,
+    x_col,
+    y_col,
+    title=None,
+    resample: str | None = None,
+    smooth: int | None = None,
+    annotate_last: bool = False,
+    figsize: tuple[int, int] = (12, 6),
+):
+    """
+    Advanced time-series plot.
+
+    Parameters
+    ----------
+    df           : pandas.DataFrame
+    x_col        : name of datetime column (or existing datetime index name)
+    y_col        : single column name or list of names to plot
+    title        : plot title (defaults to "y_col over time")
+    resample     : pandas offset alias (e.g. 'M','W'); if set, does df.resample(...).mean()
+    smooth       : integer window for rolling mean smoothing
+    annotate_last: if True, labels each series’ last point
+    figsize      : figure size tuple
+
+    Example
+    -------
+    ts_plot(df, 'release_date', 'count', resample='M', smooth=3,
+            annotate_last=True,
+            title='Monthly Album Releases (3-mo avg)')
+    """
+    # ── Prepare the data ────────────────────────────────────────────────────
+    df = df.copy()
+    # Ensure datetime index
+    if x_col in df.columns:
+        df[x_col] = pd.to_datetime(df[x_col])
+        df.set_index(x_col, inplace=True)
+    else:
+        df.index = pd.to_datetime(df.index)
+
+    # Subset the series to plot
+    if isinstance(y_col, (list, tuple)):
+        data = df[y_col].copy()
+    else:
+        data = df[[y_col]].copy()
+
+    # Resample if requested
+    if resample:
+        data = data.resample(resample).mean()
+
+    # Smooth if requested
+    if smooth and smooth > 1:
+        data = data.rolling(window=smooth, min_periods=1, center=True).mean()
+
+    # ── Styling & Plot ─────────────────────────────────────────────────────
     sns.set_style("whitegrid", {
         "figure.facecolor": "white",
         "axes.facecolor":   "white",
         "grid.color":       "lightgrey"
     })
-    fig, ax = plt.subplots(figsize=(12, 6))
-    ax.plot(df[x_col], df[y_col], color="black")
-    ax.grid(True)
+    fig, ax = plt.subplots(figsize=figsize)
+
+    # Plot each column
+    for col in data.columns:
+        ax.plot(
+            data.index,
+            data[col],
+            label=str(col),
+            linewidth=2,
+            marker='o',
+            markersize=4
+        )
+
+    # Legend & labels
+    ax.legend(title="Series", loc="upper left")
+    ax.set_title(title or f"{', '.join(data.columns)} over time", weight="bold")
+    ax.set_xlabel(x_col, weight="bold")
+    ax.set_ylabel("Value", weight="bold")
+
+    # Smart date formatting
     locator = mdates.AutoDateLocator()
     ax.xaxis.set_major_locator(locator)
     ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(locator))
-    ax.set_title(title or f"{y_col} → {x_col}", weight="bold")
-    ax.set_xlabel(x_col, weight="bold")
-    ax.set_ylabel(y_col, weight="bold")
+    fig.autofmt_xdate()
+
+    # Optional: annotate the last point of each series
+    if annotate_last:
+        for col in data.columns:
+            x0 = data.index[-1]
+            y0 = data[col].iloc[-1]
+            ax.annotate(
+                f"{y0:.2f}",
+                xy=(x0, y0),
+                xytext=(5, 5),
+                textcoords="offset points",
+                fontsize=9,
+                weight="bold"
+            )
+
     plt.tight_layout()
     plt.show()
 
