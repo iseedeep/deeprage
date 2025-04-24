@@ -365,6 +365,7 @@ class RageReport:
             scoring, metric_name = 'neg_root_mean_squared_error', 'RMSE'
             candidates = [
                 ('Ridge',            Ridge()),
+                ('Ridge (svd)',      Ridge(solver='svd')), 
                 ('RandomForest',     RandomForestRegressor()),
                 ('XGBoost',          XGBRegressor())
             ]
