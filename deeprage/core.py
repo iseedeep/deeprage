@@ -202,109 +202,82 @@ def val_top_n(
     category_col: str,
     value_col: str,
     top_n: int = 5,
-    agg_method: str = 'sum',    # 'sum' or 'mean'
+    agg_method: str = 'sum',
     sort_ascending: bool = False,
-    horizontal: bool = False,
+    horizontal: bool | None = None,
     figsize: tuple[int, int] = (12, 6)
 ):
     """
-    Plot the top-N categories based on an aggregated numeric column.
-
-    Parameters
-    ----------
-    df             : pd.DataFrame
-    category_col   : name of the categorical column
-    value_col      : name of the numeric column to aggregate
-    top_n          : how many categories to show
-    agg_method     : 'sum' or 'mean'
-    sort_ascending : if True, bars go from smallest→largest
-    horizontal     : if True, use horizontal bars
-    figsize        : figure size
-
-    Returns
-    -------
-    summary_df : pd.DataFrame
-        with columns [category_col, 'Value', 'Percentage']
+    Auto-orienting Top-N aggregated bar chart for long labels.
     """
-    # ── 1) Aggregate
+    # 1) Aggregate
     if agg_method == 'sum':
-        agg_series = df.groupby(category_col)[value_col].sum()
+        agg = df.groupby(category_col)[value_col].sum()
     elif agg_method == 'mean':
-        agg_series = df.groupby(category_col)[value_col].mean()
+        agg = df.groupby(category_col)[value_col].mean()
     else:
         raise ValueError("agg_method must be 'sum' or 'mean'")
-
-    summary_df = (
-        agg_series
+    summary = (
+        agg
         .reset_index(name='Value')
         .assign(Percentage=lambda x: x['Value'] / x['Value'].sum() * 100)
         .sort_values('Value', ascending=False)
         .head(top_n)
     )
+    summary = summary.sort_values('Value', ascending=sort_ascending)
 
-    # Optional sort for plotting order
-    summary_df = summary_df.sort_values('Value', ascending=sort_ascending)
+    # 2) Decide orientation if not explicit
+    max_label_len = summary[category_col].str.len().max()
+    if horizontal is None:
+        horizontal = max_label_len > 10 or top_n > 7
 
-    # ── 2) Plot
+    # 3) Plot
     fig, ax = plt.subplots(figsize=figsize)
-    # gradient greys
-    colors = plt.cm.Greys(np.linspace(0.7, 0.2, len(summary_df)))
+    colors = plt.cm.Greys(np.linspace(0.7, 0.2, len(summary)))
 
     if horizontal:
-        sns.barplot(
-            data=summary_df,
-            y=category_col, x='Value',
-            palette=colors, ax=ax
-        )
+        sns.barplot(data=summary, y=category_col, x='Value', palette=colors, ax=ax)
     else:
-        sns.barplot(
-            data=summary_df,
-            x=category_col, y='Value',
-            palette=colors, ax=ax
-        )
+        sns.barplot(data=summary, x=category_col, y='Value', palette=colors, ax=ax)
 
-    # ── 3) Annotations
-    for bar, (_, row) in zip(ax.patches, summary_df.iterrows()):
+    # 4) One-line annotations & styling
+    for bar, (_, row) in zip(ax.patches, summary.iterrows()):
+        val = row['Value']
+        pct = row['Percentage']
+        txt = f"{val:,.0f} ({pct:.1f}%)"
         if horizontal:
-            val = row['Value']
-            pct = row['Percentage']
             x = bar.get_width()
             y = bar.get_y() + bar.get_height() / 2
-            txt = f"{val:,.0f}\n({pct:,.1f}%)"
-            ax.text(x + summary_df['Value'].max() * 0.02, y, txt,
-                    va='center', ha='left', fontsize=12, fontweight='bold',
+            ax.text(x + summary['Value'].max() * 0.02, y, txt,
+                    va='center', ha='left', fontsize=10, fontweight='bold',
                     path_effects=[plt.matplotlib.patheffects.withStroke(
-                        linewidth=3, foreground='black')])
+                        linewidth=2, foreground='black')])
         else:
-            val = row['Value']
-            pct = row['Percentage']
-            x = bar.get_x() + bar.get_width() / 2
+            x = bar.get_x() + bar.get_width()/2
             y = bar.get_height()
-            txt = f"{val:,.0f}\n({pct:,.1f}%)"
-            ax.text(x, y + summary_df['Value'].max() * 0.02, txt,
-                    ha='center', va='bottom', fontsize=12, fontweight='bold',
+            ax.text(x, y + summary['Value'].max() * 0.02, txt,
+                    ha='center', va='bottom', fontsize=10, fontweight='bold',
                     path_effects=[plt.matplotlib.patheffects.withStroke(
-                        linewidth=3, foreground='black')])
+                        linewidth=2, foreground='black')])
 
-    # ── 4) Styling
+    # 5) Final polish
     if horizontal:
-        ax.set_ylabel(category_col, fontsize=14, fontweight='bold')
-        ax.set_xlabel(value_col, fontsize=14, fontweight='bold')
+        ax.set_ylabel(category_col, fontsize=12, fontweight='bold')
+        ax.set_xlabel(value_col, fontsize=12, fontweight='bold')
+        fig.subplots_adjust(left=0.3)
     else:
-        ax.set_xlabel(category_col, fontsize=14, fontweight='bold')
-        ax.set_ylabel(value_col, fontsize=14, fontweight='bold')
-        ax.set_xticklabels(ax.get_xticklabels(), rotation=45,
-                           fontsize=12, fontweight='bold')
+        ax.set_xlabel(category_col, fontsize=12, fontweight='bold')
+        ax.set_ylabel(value_col, fontsize=12, fontweight='bold')
+        ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha='right',
+                           fontsize=10, fontweight='bold')
+        fig.subplots_adjust(bottom=0.3)
 
-    ax.set_title(
-        f"Top {top_n} {category_col} by {value_col.title()}",
-        fontsize=16, fontweight='bold'
-    )
+    ax.set_title(f"Top {top_n} {category_col} by {value_col}", fontsize=14, fontweight='bold')
     ax.grid(True, linestyle='--', alpha=0.3)
     plt.tight_layout()
     plt.show()
 
-    return summary_df
+    return summary
 
 def val_all_hist(df, bins=30, kde=False, freq=False, n_cols=3):
     """
