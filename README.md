@@ -167,7 +167,11 @@ val_hist(df, 'NumericColumn', bins=30, kde=True,  freq=False)
 #    – percent frequencies (no KDE)
 val_hist(df, 'NumericColumn', bins=20, kde=False, freq=True)
 
-# 7. Average of 'ValueColumn' by 'CategoryColumn'
+# 7. Top-N aggregation plot
+#    – Sum of 'ValueColumn' by 'CategoryColumn'
+val_top_n(df, 'CategoryColumn', 'ValueColumn', top_n=5, agg_method='sum')
+
+#    – Average of 'ValueColumn' by 'CategoryColumn'
 val_top_n(df, 'CategoryColumn', 'ValueColumn', top_n=5, agg_method='mean')
 ```
 
