@@ -410,10 +410,6 @@ def val_seasonality(
             ax.text(x, y + serie.max()*0.02, f"{y:.0f}",
                     ha='center', va='bottom', fontsize=12, fontweight='bold',
                     path_effects=[withStroke(linewidth=3, foreground='white')])
-    else:
-        x0, y0 = labels[-1], serie.iloc[-1]
-        ax.annotate(f"{y0:.0f}", xy=(x0, y0), xytext=(0,8),
-                    textcoords="offset points", fontsize=12, fontweight='bold', ha='center')
 
     plt.tight_layout()
     plt.show()
