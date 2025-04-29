@@ -9,6 +9,7 @@ from prettytable import PrettyTable
 from ydata_profiling import ProfileReport
 
 from matplotlib.ticker import PercentFormatter
+from matplotlib.patheffects import withStroke
 
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import OneHotEncoder, StandardScaler, LabelEncoder
