@@ -7,9 +7,9 @@ DeepRage is an all‑in‑one Python toolkit for EDA, profiling, visualization, 
 
 ---
 
-![](https://www.dropbox.com/scl/fi/ttzdj5w4d4s60f4x8ljrg/1.png?rlkey=07a8vorefu8ulhwcjfkj77hm4&st=uyns35ux&raw=1)
+![](https://www.dropbox.com/scl/fi/9harlraotf2b39bzza70r/Problem-and-Solution-Graphic-Organizer.png?rlkey=nsnc8lcrplf6tdsycwefhre3v&st=9s9s9n4k&raw=1)
 
-![](https://www.dropbox.com/scl/fi/9harlraotf2b39bzza70r/Problem-and-Solution-Graphic-Organizer.png?rlkey=nsnc8lcrplf6tdsycwefhre3v&st=p819a3v7&raw=1)
+![](https://www.dropbox.com/scl/fi/bn8p0e1gggorkvodwdmde/Problem-and-Solution-Graphic-Organizer-1.png?rlkey=s005f6tpkvkhxqb7of4elv3wc&st=40k9y6op&raw=1)
 
 
 ## 🚀 Features
