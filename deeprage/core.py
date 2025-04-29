@@ -252,6 +252,32 @@ def val_all_hist(df, bins=30, kde=False, freq=False, n_cols=3):
     plt.tight_layout()
     plt.show()
 
+def val_top(df, column, agg_column, top_n=None, sort=False):
+    top_df = df.nlargest(
+        top_n,
+        agg_column)
+    [
+    column,
+    agg_column]
+    .reset_index(drop=True)
+    
+    fig, ax = plt.subplot(figure=(12, 6))
+
+    sns.barplot(
+        data=df,
+        x=column,
+        y=agg_column,
+        palette='Greys'
+    )
+    ax.xticklabels(ax.get_xtickslabel(), rotation=45, fontsize=16, fontweight='bold')
+    ax.ylabel(fontsize=16, fontweight='bold')
+    
+    ax.set_title(f"top{top_n} {column} of {agg_column}", fontsize=16, fontweight='bold')
+    ax.gird(True, linestyle='--', alpha=0.3)
+
+    plt.tight_layout()
+    plt.show()
+
 def ts_plot(
     df,
     x_col,
