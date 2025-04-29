@@ -351,40 +351,26 @@ def ts_plot(
     annotate_last: bool = False,
     figsize: tuple[int, int] = (12, 6),
 ):
-    """
-    Time-series / timeline plot.
-
-    • Parses mixed date formats (YYYY, YYYY-MM-DD, ISO…)
-    • If y_col is numeric: line + marker plot (with optional resample/smooth)
-    • If y_col is non-numeric: tidy scatter timeline with labels
-    • Optional last-point annotation
-    """
-    # ── 1) Copy & parse dates ────────────────────────────────────────────────
+    # 1) Copy & parse dates
     df = df.copy()
-    raw_dates = df[x_col].astype(str)
-
-    # Generic parse + year-only fallback
-    dates = pd.to_datetime(raw_dates, errors='coerce', infer_datetime_format=True)
-    year_mask = raw_dates.str.match(r'^\d{4}$')
-    if year_mask.any():
-        dates.loc[year_mask] = pd.to_datetime(raw_dates[year_mask], format='%Y')
-
+    raw = df[x_col].astype(str)
+    dates = pd.to_datetime(raw, errors="coerce", infer_datetime_format=True)
+    # fallback for YYYY-only strings
+    mask_year = raw.str.match(r"^\d{4}$")
+    if mask_year.any():
+        dates.loc[mask_year] = pd.to_datetime(raw[mask_year], format="%Y")
     if dates.isna().any():
-        print(f"⚠️  Coerced {dates.isna().sum()} bad dates in '{x_col}' → dropped")
-    df[x_col] = dates.dropna()
+        print(f"⚠️  Coerced {dates.isna().sum()} bad dates → dropping those rows")
+    # assign full series, then drop
+    df[x_col] = dates
     df = df.loc[df[x_col].notna()]
 
-    # Set datetime index
+    # 2) Set index and pick series
     df.set_index(x_col, inplace=True)
-
-    # ── 2) Select & detect series type ───────────────────────────────────────
-    # Single-series only
-    if isinstance(y_col, (list, tuple)):
-        raise ValueError("ts_plot only supports a single y_col; got list/tuple")
-
     series = df[y_col]
-    is_numeric = pd.api.types.is_numeric_dtype(series)
+    is_num = pd.api.types.is_numeric_dtype(series)
 
+    # 3) Styling
     sns.set_style("whitegrid", {
         "figure.facecolor": "white",
         "axes.facecolor":   "white",
@@ -392,59 +378,44 @@ def ts_plot(
     })
     fig, ax = plt.subplots(figsize=figsize)
 
-    if is_numeric:
-        # ── Numeric path: resample / smooth / line plot ──────────────────────
+    if is_num:
         data = series.to_frame()
-
         if resample:
             data = data.resample(resample).mean()
         if smooth and smooth > 1:
-            data = data.rolling(window=smooth, min_periods=1, center=True).mean()
-
-        ax.plot(
-            data.index, data[y_col],
-            marker='o', linewidth=2, markersize=4, color='black'
-        )
+            data = data.rolling(smooth, center=True, min_periods=1).mean()
+        ax.plot(data.index, data[y_col], marker="o", lw=2, ms=4, color="black")
         ax.set_ylabel("Value", weight="bold")
 
     else:
-        # ── Timeline path: map each unique label to an integer code ──────────
         cats = pd.Categorical(series)
         codes = cats.codes
-        ax.scatter(df.index, codes, marker='o', s=50, color='black')
+        ax.scatter(df.index, codes, s=50, color="black")
         for x, y in zip(df.index, codes):
-            ax.vlines(x, ymin=-0.5, ymax=y, color='grey', alpha=0.3)
-
-        # label the y-axis with your album titles
+            ax.vlines(x, -0.5, y, color="grey", alpha=0.3)
         ax.set_yticks(range(len(cats.categories)))
         ax.set_yticklabels(cats.categories)
         ax.set_ylabel(y_col, weight="bold")
 
-    # ── 3) Common styling ───────────────────────────────────────────────────
+    # 4) Common formatting
     ax.set_title(title or f"{y_col} over time", weight="bold")
     ax.set_xlabel(x_col, weight="bold")
-
-    # Smart date ticks
     locator = mdates.AutoDateLocator()
     ax.xaxis.set_major_locator(locator)
     ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(locator))
     fig.autofmt_xdate()
 
-    # ── 4) Annotate last point (optional) ──────────────────────────────────
+    # 5) Optional last‐point annotation
     if annotate_last:
-        if is_numeric:
+        if is_num:
             x0, y0 = data.index[-1], data[y_col].iloc[-1]
+            label = f"{y0:.2f}"
         else:
             x0 = df.index[-1]
-            y0 = pd.Categorical(series).codes[-1]
-        ax.annotate(
-            f"{y0:.2f}" if is_numeric else cats.categories[y0],
-            xy=(x0, y0),
-            xytext=(5, 5),
-            textcoords="offset points",
-            fontsize=9,
-            weight="bold"
-        )
+            y0 = codes[-1]
+            label = cats.categories[y0]
+        ax.annotate(label, xy=(x0, y0), xytext=(5, 5),
+                    textcoords="offset points", fontsize=9, weight="bold")
 
     plt.tight_layout()
     plt.show()
