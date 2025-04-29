@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import seaborn as sns
 
+from typing import Literal
 from prettytable import PrettyTable
 from ydata_profiling import ProfileReport
 
@@ -341,84 +342,83 @@ def val_all_hist(df, bins=30, kde=False, freq=False, n_cols=3):
     plt.tight_layout()
     plt.show()
 
-def ts_plot(
+def val_seasonality(
     df,
-    x_col,
-    y_col,
-    title=None,
-    resample: str | None = None,
+    date_col: str,
+    value_col: str,
+    period: Literal['M','W','Y'] = 'M',
+    kind: Literal['bar','line'] = 'bar',
     smooth: int | None = None,
-    annotate_last: bool = False,
-    figsize: tuple[int, int] = (12, 6),
+    figsize: tuple[int,int] = (12,6)
 ):
-    # 1) Copy & parse dates
-    df = df.copy()
-    raw = df[x_col].astype(str)
-    dates = pd.to_datetime(raw, errors="coerce", infer_datetime_format=True)
-    # fallback for YYYY-only strings
-    mask_year = raw.str.match(r"^\d{4}$")
-    if mask_year.any():
-        dates.loc[mask_year] = pd.to_datetime(raw[mask_year], format="%Y")
-    if dates.isna().any():
-        print(f"⚠️  Coerced {dates.isna().sum()} bad dates → dropping those rows")
-    # assign full series, then drop
-    df[x_col] = dates
-    df = df.loc[df[x_col].notna()]
+    """
+    Plot seasonality of `value_col` over:
+      • 'M' → month (Jan…Dec)
+      • 'W' → weekdays (Mon…Sun)
+      • 'Y' → calendar years
+    Choose 'bar' or 'line' and optional moving average.
+    """
+    # 1) Prep
+    df2 = df.copy()
+    df2[date_col] = pd.to_datetime(df2[date_col], format='%d-%m-%y', errors='coerce')
+    df2 = df2.dropna(subset=[date_col, value_col])
+    df2 = df2.set_index(date_col).sort_index()
 
-    # 2) Set index and pick series
-    df.set_index(x_col, inplace=True)
-    series = df[y_col]
-    is_num = pd.api.types.is_numeric_dtype(series)
+    # 2) Aggregate
+    if period == 'M':
+        serie = df2[value_col].resample('M').sum()
+        labels = serie.index.month_name().str[:3]
+        xlabel = "Month"
+    elif period == 'W':
+        daily = df2[value_col].resample('D').sum()
+        serie = daily.groupby(daily.index.day_name()).sum().reindex(
+            ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
+        )
+        labels = serie.index
+        xlabel = "Day of Week"
+    else:  # 'Y'
+        serie = df2[value_col].resample('Y').sum()
+        labels = serie.index.year.astype(str)
+        xlabel = "Year"
 
-    # 3) Styling
+    if smooth and smooth > 1:
+        serie = serie.rolling(window=smooth, center=True, min_periods=1).mean()
+
+    # 3) Plot
+    fig, ax = plt.subplots(figsize=figsize)
     sns.set_style("whitegrid", {
         "figure.facecolor": "white",
         "axes.facecolor":   "white",
         "grid.color":       "lightgrey"
     })
-    fig, ax = plt.subplots(figsize=figsize)
 
-    if is_num:
-        data = series.to_frame()
-        if resample:
-            data = data.resample(resample).mean()
-        if smooth and smooth > 1:
-            data = data.rolling(smooth, center=True, min_periods=1).mean()
-        ax.plot(data.index, data[y_col], marker="o", lw=2, ms=4, color="black")
-        ax.set_ylabel("Value", weight="bold")
-
+    if kind == 'bar':
+        ax.bar(labels, serie.values, color='black', edgecolor='grey')
     else:
-        cats = pd.Categorical(series)
-        codes = cats.codes
-        ax.scatter(df.index, codes, s=50, color="black")
-        for x, y in zip(df.index, codes):
-            ax.vlines(x, -0.5, y, color="grey", alpha=0.3)
-        ax.set_yticks(range(len(cats.categories)))
-        ax.set_yticklabels(cats.categories)
-        ax.set_ylabel(y_col, weight="bold")
+        ax.plot(labels, serie.values, marker='o', lw=2, ms=6, color='black')
 
-    # 4) Common formatting
-    ax.set_title(title or f"{y_col} over time", weight="bold")
-    ax.set_xlabel(x_col, weight="bold")
-    locator = mdates.AutoDateLocator()
-    ax.xaxis.set_major_locator(locator)
-    ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(locator))
-    fig.autofmt_xdate()
+    # 4) Style & annotate
+    ax.set_title(f"{value_col} Seasonality ({'Monthly' if period=='M' else 'Weekly' if period=='W' else 'Annual'})",
+                 fontsize=16, fontweight='bold')
+    ax.set_xlabel(xlabel, fontsize=14, fontweight='bold')
+    ax.set_ylabel('Sales', fontsize=14, fontweight='bold')
+    ax.tick_params(axis='x', rotation=45, labelsize=12)
+    ax.tick_params(axis='y', labelsize=12)
 
-    # 5) Optional last‐point annotation
-    if annotate_last:
-        if is_num:
-            x0, y0 = data.index[-1], data[y_col].iloc[-1]
-            label = f"{y0:.2f}"
-        else:
-            x0 = df.index[-1]
-            y0 = codes[-1]
-            label = cats.categories[y0]
-        ax.annotate(label, xy=(x0, y0), xytext=(5, 5),
-                    textcoords="offset points", fontsize=9, weight="bold")
+    if kind == 'bar':
+        for x, y in zip(labels, serie):
+            ax.text(x, y + serie.max()*0.02, f"{y:.0f}",
+                    ha='center', va='bottom', fontsize=12, fontweight='bold',
+                    path_effects=[withStroke(linewidth=3, foreground='white')])
+    else:
+        x0, y0 = labels[-1], serie.iloc[-1]
+        ax.annotate(f"{y0:.0f}", xy=(x0, y0), xytext=(0,8),
+                    textcoords="offset points", fontsize=12, fontweight='bold', ha='center')
 
     plt.tight_layout()
     plt.show()
+
+    return serie
 
 
 
