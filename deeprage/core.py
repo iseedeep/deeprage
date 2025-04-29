@@ -253,28 +253,33 @@ def val_all_hist(df, bins=30, kde=False, freq=False, n_cols=3):
     plt.show()
 
 def val_top(df, column, agg_column, top_n=None, sort=False):
-    top_df = df.nlargest(
-        top_n,
-        agg_column)
-    [
-    column,
-    agg_column]
-    .reset_index(drop=True)
+    # Get the top N rows based on agg_column
+    top_df = df.nlargest(top_n, agg_column)
     
-    fig, ax = plt.subplot(figure=(12, 6))
+    # Reset index for top_df
+    top_df = top_df[[column, agg_column]].reset_index(drop=True)
+    
+    # Create the plot
+    fig, ax = plt.subplots(figsize=(12, 6))
 
     sns.barplot(
-        data=df,
+        data=top_df,  # Use top_df for the barplot
         x=column,
         y=agg_column,
         palette='Greys'
     )
-    ax.xticklabels(ax.get_xtickslabel(), rotation=45, fontsize=16, fontweight='bold')
-    ax.ylabel(fontsize=16, fontweight='bold')
     
-    ax.set_title(f"top{top_n} {column} of {agg_column}", fontsize=16, fontweight='bold')
-    ax.gird(True, linestyle='--', alpha=0.3)
+    # Format the x-tick labels
+    ax.set_xticklabels(ax.get_xticklabels(), rotation=45, fontsize=16, fontweight='bold')
+    ax.set_ylabel(agg_column, fontsize=16, fontweight='bold')  # Set y-label
 
+    # Set title
+    ax.set_title(f"Top {top_n} {column} of {agg_column}", fontsize=16, fontweight='bold')
+    
+    # Add grid lines
+    ax.grid(True, linestyle='--', alpha=0.3)
+
+    # Adjust layout and display plot
     plt.tight_layout()
     plt.show()
 
