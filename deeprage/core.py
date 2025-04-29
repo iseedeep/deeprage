@@ -197,6 +197,115 @@ def val_hist(df, column, bins=30, kde=False, freq=False):
     plt.tight_layout()
     plt.show()
 
+def val_top_n(
+    df,
+    category_col: str,
+    value_col: str,
+    top_n: int = 5,
+    agg_method: str = 'sum',    # 'sum' or 'mean'
+    sort_ascending: bool = False,
+    horizontal: bool = False,
+    figsize: tuple[int, int] = (12, 6)
+):
+    """
+    Plot the top-N categories based on an aggregated numeric column.
+
+    Parameters
+    ----------
+    df             : pd.DataFrame
+    category_col   : name of the categorical column
+    value_col      : name of the numeric column to aggregate
+    top_n          : how many categories to show
+    agg_method     : 'sum' or 'mean'
+    sort_ascending : if True, bars go from smallest→largest
+    horizontal     : if True, use horizontal bars
+    figsize        : figure size
+
+    Returns
+    -------
+    summary_df : pd.DataFrame
+        with columns [category_col, 'Value', 'Percentage']
+    """
+    # ── 1) Aggregate
+    if agg_method == 'sum':
+        agg_series = df.groupby(category_col)[value_col].sum()
+    elif agg_method == 'mean':
+        agg_series = df.groupby(category_col)[value_col].mean()
+    else:
+        raise ValueError("agg_method must be 'sum' or 'mean'")
+
+    summary_df = (
+        agg_series
+        .reset_index(name='Value')
+        .assign(Percentage=lambda x: x['Value'] / x['Value'].sum() * 100)
+        .sort_values('Value', ascending=False)
+        .head(top_n)
+    )
+
+    # Optional sort for plotting order
+    summary_df = summary_df.sort_values('Value', ascending=sort_ascending)
+
+    # ── 2) Plot
+    fig, ax = plt.subplots(figsize=figsize)
+    # gradient greys
+    colors = plt.cm.Greys(np.linspace(0.7, 0.2, len(summary_df)))
+
+    if horizontal:
+        sns.barplot(
+            data=summary_df,
+            y=category_col, x='Value',
+            palette=colors, ax=ax
+        )
+    else:
+        sns.barplot(
+            data=summary_df,
+            x=category_col, y='Value',
+            palette=colors, ax=ax
+        )
+
+    # ── 3) Annotations
+    for bar, (_, row) in zip(ax.patches, summary_df.iterrows()):
+        if horizontal:
+            val = row['Value']
+            pct = row['Percentage']
+            x = bar.get_width()
+            y = bar.get_y() + bar.get_height() / 2
+            txt = f"{val:,.0f}\n({pct:,.1f}%)"
+            ax.text(x + summary_df['Value'].max() * 0.02, y, txt,
+                    va='center', ha='left', fontsize=12, fontweight='bold',
+                    path_effects=[plt.matplotlib.patheffects.withStroke(
+                        linewidth=3, foreground='black')])
+        else:
+            val = row['Value']
+            pct = row['Percentage']
+            x = bar.get_x() + bar.get_width() / 2
+            y = bar.get_height()
+            txt = f"{val:,.0f}\n({pct:,.1f}%)"
+            ax.text(x, y + summary_df['Value'].max() * 0.02, txt,
+                    ha='center', va='bottom', fontsize=12, fontweight='bold',
+                    path_effects=[plt.matplotlib.patheffects.withStroke(
+                        linewidth=3, foreground='black')])
+
+    # ── 4) Styling
+    if horizontal:
+        ax.set_ylabel(category_col, fontsize=14, fontweight='bold')
+        ax.set_xlabel(value_col, fontsize=14, fontweight='bold')
+    else:
+        ax.set_xlabel(category_col, fontsize=14, fontweight='bold')
+        ax.set_ylabel(value_col, fontsize=14, fontweight='bold')
+        ax.set_xticklabels(ax.get_xticklabels(), rotation=45,
+                           fontsize=12, fontweight='bold')
+
+    ax.set_title(
+        f"Top {top_n} {category_col} by {value_col.title()}",
+        fontsize=16, fontweight='bold'
+    )
+    ax.grid(True, linestyle='--', alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+
+    return summary_df
+
 def val_all_hist(df, bins=30, kde=False, freq=False, n_cols=3):
     """
     Plot histograms for all numeric columns in a grid layout.
@@ -249,37 +358,6 @@ def val_all_hist(df, bins=30, kde=False, freq=False, n_cols=3):
     for ax in axes[n:]:
         fig.delaxes(ax)
 
-    plt.tight_layout()
-    plt.show()
-
-def val_top(df, column, agg_column, top_n=None, sort=False):
-    # Get the top N rows based on agg_column
-    top_df = df.nlargest(top_n, agg_column)
-    
-    # Reset index for top_df
-    top_df = top_df[[column, agg_column]].reset_index(drop=True)
-    
-    # Create the plot
-    fig, ax = plt.subplots(figsize=(12, 6))
-
-    sns.barplot(
-        data=top_df,  # Use top_df for the barplot
-        x=column,
-        y=agg_column,
-        palette='Greys'
-    )
-    
-    # Format the x-tick labels
-    ax.set_xticklabels(ax.get_xticklabels(), rotation=45, fontsize=16, fontweight='bold')
-    ax.set_ylabel(agg_column, fontsize=16, fontweight='bold')  # Set y-label
-
-    # Set title
-    ax.set_title(f"Top {top_n} {column} of {agg_column}", fontsize=16, fontweight='bold')
-    
-    # Add grid lines
-    ax.grid(True, linestyle='--', alpha=0.3)
-
-    # Adjust layout and display plot
     plt.tight_layout()
     plt.show()
 
