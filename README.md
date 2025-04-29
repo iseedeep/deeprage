@@ -161,11 +161,14 @@ val_bar(df, 'CategoryColumn', top_n=5, sort=True)
 ts_plot(df, 'DateColumn', 'ValueColumn', title='Trend')
 rr.ts_plot('DateColumn', 'ValueColumn', title='Trend')
 
-# 6. **Numeric histogram**
+# 6. Numeric histogram
 #    – raw counts + KDE
 val_hist(df, 'NumericColumn', bins=30, kde=True,  freq=False)
 #    – percent frequencies (no KDE)
 val_hist(df, 'NumericColumn', bins=20, kde=False, freq=True)
+
+# 7. Average of 'ValueColumn' by 'CategoryColumn'
+val_top_n(df, 'CategoryColumn', 'ValueColumn', top_n=5, agg_method='mean')
 ```
 
 ### FastAPI Endpoint
