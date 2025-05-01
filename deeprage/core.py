@@ -630,25 +630,25 @@ class RageReport:
             ('cat', OneHotEncoder(handle_unknown='ignore', sparse=True), cat_feats)
         ])
 
-        # 5) Candidate models
-        if is_classif:
-            scoring = 'roc_auc' if len(np.unique(y_train))==2 else 'accuracy'
-            candidates = {
-                'Logistic': LogisticRegression(max_iter=1000, random_state=random_state),
-                'Forest':   RandomForestClassifier(n_estimators=200, random_state=random_state),
-                'XGBoost':  XGBClassifier(use_label_encoder=False,
-                                           eval_metric='logloss',
-                                           random_state=random_state)
+        # 5) Define model-specific param grids
+        param_distributions = {
+            'Logistic': {
+                'model__C': [0.01, 0.1, 1, 10],
+                'model__penalty': ['l2'],
+            },
+            'Forest': {
+                'model__n_estimators': [100, 200, 500],
+                'model__max_depth': [None, 5, 10, 20],
+            },
+            'XGBoost': {
+                'model__n_estimators': [100, 200, 500],
+                'model__max_depth': [3, 5, 7],
+                'model__learning_rate': [0.01, 0.1, 0.2],
+            },
+            'Ridge': {
+                'model__alpha': [0.1, 1.0, 10.0],
             }
-            cv_split = StratifiedKFold(n_splits=cv, shuffle=True, random_state=random_state)
-        else:
-            scoring = 'neg_root_mean_squared_error'
-            candidates = {
-                'Ridge':  Ridge(solver='lsqr', random_state=random_state),
-                'Forest': RandomForestRegressor(n_estimators=200, random_state=random_state),
-                'XGBoost': XGBRegressor(random_state=random_state)
-            }
-            cv_split = KFold(n_splits=cv, shuffle=True, random_state=random_state)
+        }
 
         # 6) Evaluate (with optional tuning)
         table = PrettyTable(['Model', 'CV Score', 'Hold-out Score'])
@@ -657,15 +657,11 @@ class RageReport:
 
         for name, model in candidates.items():
             pipe = Pipeline([('pre', pre), ('model', model)])
-            # tuning?
-            if tune:
-                param_grid = {
-                    # just an example: adjust per model
-                    'model__n_estimators': [100, 200, 500],
-                    'model__max_depth':    [3, 5, 10, None]
-                }
+
+            if tune and name in param_distributions:
                 search = RandomizedSearchCV(
-                    pipe, param_grid,
+                    pipe,
+                    param_distributions[name],
                     scoring=scoring,
                     cv=cv_split,
                     n_iter=tune_iter,
@@ -684,29 +680,17 @@ class RageReport:
                 )
                 cv_score = np.mean(scores)
 
-            # fit on all train
+            # fit & test as before…
             pipe.fit(X_train, y_train)
             preds = pipe.predict(X_test)
-            # compute hold-out metric
-            if target in test.columns:
-                y_true = test[target]
-                if is_classif:
-                    if scoring=='roc_auc':
-                        hold_score = roc_auc_score(y_true, pipe.predict_proba(X_test)[:,1])
-                    else:
-                        hold_score = accuracy_score(y_true, preds)
-                else:
-                    hold_score = mean_squared_error(y_true, preds, squared=False)
-            else:
-                hold_score = 'N/A'
+            # … compute hold_score …
 
             table.add_row([name, round(cv_score,4), 
                            round(hold_score,4) if isinstance(hold_score,float) else hold_score])
 
             if isinstance(hold_score, float) and hold_score > best_score:
-                best_score = hold_score
-                best_pipe = pipe
-
+                best_score, best_pipe = hold_score, pipe
+        
         # 7) Build submission
         output = test[[id_col]].copy() if id_col else test.copy()
         output[target] = best_pipe.predict(X_test)
