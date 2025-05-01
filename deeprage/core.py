@@ -646,34 +646,35 @@ class RageReport:
         id_col=None,
         cv=5,
         tune=False,
-        tune_iter=10,           # tune_iter won’t limit Halving search, it's here for API consistency
+        tune_iter=10,
         random_state=42
     ):
         """
-        Competition-ready pipeline with caching, halving search, and full-core trees:
-          1) Clean train/test
-          2) CV (+ optional HalvingRandomSearchCV on Forest/XGBoost)
-          3) Hold-out evaluation
-          4) Writes submission.csv using id from index or column
+        Competition-ready pipeline with:
+          - HalvingRandomSearchCV for quick HPO
+          - Falls back to CV score if no hold-out labels
+          - Submission.csv built from index or column
         """
-        # 1) Prepare & clean
+        # 1) Clean train
         self.df = df_train.copy()
         self.clean()
         train = self.df
-        test  = pd.read_csv(df_test) if isinstance(df_test, str) else df_test.copy()
 
-        # 2) Split features/target (id in index)
+        # 2) Prepare test
+        test = pd.read_csv(df_test) if isinstance(df_test, str) else df_test.copy()
+
+        # 3) Split X/y (id is index, dropped automatically)
         X_train = train.drop(columns=[target])
         y_train = train[target]
         X_test  = test.drop(columns=[target], errors='ignore')
 
-        # 3) Detect problem type & encode labels
+        # 4) Detect problem type
         is_classif = (y_train.dtype == 'object' or y_train.nunique() <= 10)
         if is_classif:
             le = LabelEncoder()
             y_train = le.fit_transform(y_train)
 
-        # 4) Build preprocessor
+        # 5) Build preprocessor
         num_feats = X_train.select_dtypes(include='number').columns.tolist()
         cat_feats = X_train.select_dtypes(include=['object','category']).columns.tolist()
         pre = ColumnTransformer([
@@ -681,7 +682,7 @@ class RageReport:
             ('cat', OneHotEncoder(handle_unknown='ignore', sparse_output=False), cat_feats)
         ])
 
-        # 5) Define models & CV splitter
+        # 6) Define candidates & CV splitter
         if is_classif:
             scoring = 'roc_auc' if len(np.unique(y_train))==2 else 'accuracy'
             candidates = {
@@ -700,7 +701,7 @@ class RageReport:
             }
             cv_split = KFold(n_splits=cv, shuffle=True, random_state=random_state)
 
-        # 6) Hyperparameter grids for halving search
+        # 7) Hyperparam grids for halving
         tunable = {'Forest','XGBoost'}
         param_distributions = {
             'Forest': {
@@ -714,17 +715,17 @@ class RageReport:
             }
         }
 
-        # 7) Prepare cache for preprocessing
+        # 8) Prepare cache for preprocessing
         memory = Memory(location="cache_dir", verbose=0)
 
-        # 8) CV evaluation & hold-out
+        # 9) Evaluate
         table = PrettyTable(['Model','CV Score','Hold-out Score'])
         best_score, best_pipe = -np.inf, None
 
         for name, model in candidates.items():
-            # ensure full-core tree training; pipeline caching
             pipe = Pipeline([('pre', pre), ('model', model)], memory=memory)
 
+            # 9a) Tuning or plain CV
             if tune and name in tunable:
                 search = HalvingRandomSearchCV(
                     pipe,
@@ -734,7 +735,7 @@ class RageReport:
                     factor=2,
                     random_state=random_state,
                     verbose=1,
-                    n_jobs=1       # CV forks still single-process
+                    n_jobs=1
                 )
                 search.fit(X_train, y_train)
                 pipe = search.best_estimator_
@@ -744,38 +745,43 @@ class RageReport:
                     pipe, X_train, y_train,
                     cv=cv_split,
                     scoring=scoring,
-                    n_jobs=1       # CV forks single-process
+                    n_jobs=1
                 )
                 cv_score = np.mean(scores)
 
-            # fit full train & predict test
+            # 9b) Fit full train & predict test
             pipe.fit(X_train, y_train)
             preds = pipe.predict(X_test)
 
-            # compute hold-out if true labels exist
+            # 9c) Compute hold-out if available
             if target in test.columns:
                 y_true = test[target]
                 if is_classif:
-                    hold_score = (roc_auc_score(y_true, pipe.predict_proba(X_test)[:,1])
-                                  if scoring=='roc_auc'
-                                  else accuracy_score(y_true, preds))
+                    hold_score = (
+                        roc_auc_score(y_true, pipe.predict_proba(X_test)[:,1])
+                        if scoring=='roc_auc'
+                        else accuracy_score(y_true, preds)
+                    )
                 else:
                     hold_score = mean_squared_error(y_true, preds, squared=False)
             else:
-                hold_score = 'N/A'
+                hold_score = None  # flag no hold-out
 
+            # 9d) Decide which score to use for “best” model
+            select_score = hold_score if isinstance(hold_score, float) else cv_score
+            if select_score > best_score:
+                best_score, best_pipe = select_score, pipe
+
+            # 9e) Record in table
             table.add_row([
                 name,
                 round(cv_score,4),
-                round(hold_score,4) if isinstance(hold_score,float) else hold_score
+                round(hold_score,4) if isinstance(hold_score,float) else 'N/A'
             ])
 
-            if isinstance(hold_score,float) and hold_score>best_score:
-                best_score, best_pipe = hold_score, pipe
-
-        # 9) Build submission.csv from index or column
+        # 10) Build submission
         final_preds = best_pipe.predict(X_test)
-        if id_col and test.index.name==id_col:
+        if id_col and test.index.name == id_col:
             submission = pd.DataFrame({id_col: test.index, target: final_preds})
         elif id_col and id_col in test.columns:
             submission = test[[id_col]].copy()
