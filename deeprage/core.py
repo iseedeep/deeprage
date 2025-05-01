@@ -21,12 +21,12 @@ from sklearn.linear_model import Ridge, LogisticRegression
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.metrics import mean_squared_error, accuracy_score, roc_auc_score
 from sklearn.pipeline import Pipeline
-from sklearn.model_selection import cross_val_score, StratifiedKFold, KFold, RandomizedSearchCV
+from sklearn.model_selection import cross_val_score, StratifiedKFold, KFold, HalvingRandomSearchCV
 from sklearn.experimental import enable_halving_search_cv
 
 from xgboost import XGBClassifier, XGBRegressor
+from joblib import Memory
 import shap
-import joblib
 
 # ─── Helper Functions ─────────────────────────────────────────────────────────
 
@@ -646,36 +646,34 @@ class RageReport:
         id_col=None,
         cv=5,
         tune=False,
-        tune_iter=10,
+        tune_iter=10,           # tune_iter won’t limit Halving search, it's here for API consistency
         random_state=42
     ):
         """
-        Competition-ready pipeline:
+        Competition-ready pipeline with caching, halving search, and full-core trees:
           1) Clean train/test
-          2) CV (+ optional tuning on Forest/XGBoost)
+          2) CV (+ optional HalvingRandomSearchCV on Forest/XGBoost)
           3) Hold-out evaluation
           4) Writes submission.csv using id from index or column
         """
-
-        # 1) Prepare data
+        # 1) Prepare & clean
         self.df = df_train.copy()
         self.clean()
         train = self.df
+        test  = pd.read_csv(df_test) if isinstance(df_test, str) else df_test.copy()
 
-        test = pd.read_csv(df_test) if isinstance(df_test, str) else df_test.copy()
-
-        # Split features/target (id is in index, so not in columns)
+        # 2) Split features/target (id in index)
         X_train = train.drop(columns=[target])
         y_train = train[target]
         X_test  = test.drop(columns=[target], errors='ignore')
 
-        # 2) Detect problem type
+        # 3) Detect problem type & encode labels
         is_classif = (y_train.dtype == 'object' or y_train.nunique() <= 10)
         if is_classif:
             le = LabelEncoder()
             y_train = le.fit_transform(y_train)
 
-        # 3) Preprocessor
+        # 4) Build preprocessor
         num_feats = X_train.select_dtypes(include='number').columns.tolist()
         cat_feats = X_train.select_dtypes(include=['object','category']).columns.tolist()
         pre = ColumnTransformer([
@@ -683,78 +681,84 @@ class RageReport:
             ('cat', OneHotEncoder(handle_unknown='ignore', sparse_output=False), cat_feats)
         ])
 
-        # 4) Models & CV splitter
+        # 5) Define models & CV splitter
         if is_classif:
             scoring = 'roc_auc' if len(np.unique(y_train))==2 else 'accuracy'
             candidates = {
                 'Logistic': LogisticRegression(max_iter=1000, random_state=random_state),
-                'Forest':   RandomForestClassifier(n_estimators=200, random_state=random_state),
-                'XGBoost':  XGBClassifier(use_label_encoder=False, eval_metric='logloss', random_state=random_state)
+                'Forest':   RandomForestClassifier(n_estimators=100, random_state=random_state, n_jobs=-1),
+                'XGBoost':  XGBClassifier(use_label_encoder=False, eval_metric='logloss',
+                                          random_state=random_state, n_jobs=-1)
             }
             cv_split = StratifiedKFold(n_splits=cv, shuffle=True, random_state=random_state)
         else:
             scoring = 'neg_root_mean_squared_error'
             candidates = {
                 'Ridge':   Ridge(solver='lsqr', random_state=random_state),
-                'Forest':  RandomForestRegressor(n_estimators=200, random_state=random_state),
-                'XGBoost': XGBRegressor(random_state=random_state)
+                'Forest':  RandomForestRegressor(n_estimators=100, random_state=random_state, n_jobs=-1),
+                'XGBoost': XGBRegressor(random_state=random_state, n_jobs=-1)
             }
             cv_split = KFold(n_splits=cv, shuffle=True, random_state=random_state)
 
-        # 5) Hyperparameter grids
+        # 6) Hyperparameter grids for halving search
         tunable = {'Forest','XGBoost'}
         param_distributions = {
             'Forest': {
-                'model__n_estimators': [100,200],
-                'model__max_depth':    [None,5,10],
+                'model__n_estimators': [50,100],
+                'model__max_depth':    [None,5],
             },
             'XGBoost': {
-                'model__n_estimators':  [100,200],
-                'model__max_depth':     [3,5],
-                'model__learning_rate': [0.05,0.1],
+                'model__n_estimators':   [50,100],
+                'model__max_depth':      [3,5],
+                'model__learning_rate':  [0.1],
             }
         }
 
-        # 6) CV evaluation & hold-out
+        # 7) Prepare cache for preprocessing
+        memory = Memory(location="cache_dir", verbose=0)
+
+        # 8) CV evaluation & hold-out
         table = PrettyTable(['Model','CV Score','Hold-out Score'])
         best_score, best_pipe = -np.inf, None
 
         for name, model in candidates.items():
-            pipe = Pipeline([('pre',pre),('model',model)])
+            # ensure full-core tree training; pipeline caching
+            pipe = Pipeline([('pre', pre), ('model', model)], memory=memory)
 
             if tune and name in tunable:
-                search = RandomizedSearchCV(
+                search = HalvingRandomSearchCV(
                     pipe,
                     param_distributions[name],
                     scoring=scoring,
                     cv=cv_split,
-                    n_iter=min(tune_iter,len(param_distributions[name])*2),
-                    n_jobs=1,
+                    factor=2,
                     random_state=random_state,
-                    verbose=1
+                    verbose=1,
+                    n_jobs=1       # CV forks still single-process
                 )
-                search.fit(X_train,y_train)
+                search.fit(X_train, y_train)
                 pipe = search.best_estimator_
                 cv_score = search.best_score_
             else:
                 scores = cross_val_score(
                     pipe, X_train, y_train,
-                    cv=cv_split, scoring=scoring, n_jobs=1
+                    cv=cv_split,
+                    scoring=scoring,
+                    n_jobs=1       # CV forks single-process
                 )
                 cv_score = np.mean(scores)
 
-            # fit & predict
-            pipe.fit(X_train,y_train)
+            # fit full train & predict test
+            pipe.fit(X_train, y_train)
             preds = pipe.predict(X_test)
 
-            # hold-out score
+            # compute hold-out if true labels exist
             if target in test.columns:
                 y_true = test[target]
                 if is_classif:
-                    if scoring=='roc_auc':
-                        hold_score = roc_auc_score(y_true, pipe.predict_proba(X_test)[:,1])
-                    else:
-                        hold_score = accuracy_score(y_true, preds)
+                    hold_score = (roc_auc_score(y_true, pipe.predict_proba(X_test)[:,1])
+                                  if scoring=='roc_auc'
+                                  else accuracy_score(y_true, preds))
                 else:
                     hold_score = mean_squared_error(y_true, preds, squared=False)
             else:
@@ -769,15 +773,15 @@ class RageReport:
             if isinstance(hold_score,float) and hold_score>best_score:
                 best_score, best_pipe = hold_score, pipe
 
-        # 7) Build submission.csv
-        preds = best_pipe.predict(X_test)
+        # 9) Build submission.csv from index or column
+        final_preds = best_pipe.predict(X_test)
         if id_col and test.index.name==id_col:
-            submission = pd.DataFrame({id_col: test.index, target: preds})
+            submission = pd.DataFrame({id_col: test.index, target: final_preds})
         elif id_col and id_col in test.columns:
             submission = test[[id_col]].copy()
-            submission[target] = preds
+            submission[target] = final_preds
         else:
-            submission = pd.DataFrame({target: preds}, index=test.index)
+            submission = pd.DataFrame({target: final_preds}, index=test.index)
 
         submission.to_csv('submission.csv', index=False)
         print("🔥 submission.csv is ready!")
