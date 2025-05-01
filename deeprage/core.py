@@ -6,8 +6,10 @@ import matplotlib.dates as mdates
 import seaborn as sns
 
 from typing import Literal
+from itertools import combinations
 from prettytable import PrettyTable
 from ydata_profiling import ProfileReport
+from scipy.stats import pearsonr, chi2_contingency
 
 from matplotlib.ticker import PercentFormatter
 from matplotlib.patheffects import withStroke
@@ -20,6 +22,7 @@ from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.metrics import mean_squared_error, accuracy_score, roc_auc_score
 from sklearn.pipeline import Pipeline
 from sklearn.model_selection import cross_val_score, StratifiedKFold, KFold, RandomizedSearchCV
+from sklearn.experimental import enable_halving_search_cv
 
 from xgboost import XGBClassifier, XGBRegressor
 import shap
@@ -418,6 +421,64 @@ def val_seasonality(
 
     return serie
 
+def compare_columns(df, figsize=(8, 5), corr_alpha=0.05):
+    """
+    For every pair of columns in df:
+      - Num vs Num   : Pearson r + scatterplot
+      - Cat vs Num   : Boxplot of num by category
+      - Cat vs Cat   : Crosstab + chi-square + heatmap
+    """
+    num_cols = df.select_dtypes(include='number').columns.tolist()
+    cat_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
+    
+    # 1) Numeric vs Numeric
+    for x, y in combinations(num_cols, 2):
+        clean = df[[x, y]].dropna()
+        if clean.empty: continue
+        
+        r, p = pearsonr(clean[x], clean[y])
+        sig = "✓" if p < corr_alpha else "✗"
+        print(f"\n▶ {x} ↔ {y}   Pearson r={r:.2f} (p={p:.3g}) {sig}")
+        
+        plt.figure(figsize=figsize)
+        sns.scatterplot(data=clean, x=x, y=y, color='black', edgecolor='white')
+        plt.title(f"{x} vs {y}", fontweight='bold')
+        plt.tight_layout()
+        plt.show()
+    
+    # 2) Categorical vs Numeric
+    for cat, num in [(c, n) for c in cat_cols for n in num_cols]:
+        clean = df[[cat, num]].dropna()
+        if clean.empty: continue
+        
+        print(f"\n▶ {cat} → {num}")
+        display(clean.groupby(cat)[num].agg(['count','mean','std']).round(2))
+        
+        plt.figure(figsize=figsize)
+        sns.boxplot(data=clean, x=cat, y=num, palette=['#333'], fliersize=3)
+        plt.title(f"{num} by {cat}", fontweight='bold')
+        plt.xticks(rotation=45)
+        plt.tight_layout()
+        plt.show()
+    
+    # 3) Categorical vs Categorical
+    for c1, c2 in combinations(cat_cols, 2):
+        clean = df[[c1, c2]].dropna()
+        if clean.empty: continue
+        
+        ct = pd.crosstab(clean[c1], clean[c2])
+        chi2, p, _, _ = chi2_contingency(ct)
+        print(f"\n▶ {c1} ↔ {c2}   χ² p={p:.3g}")
+        display(ct)
+        
+        # heatmap of proportions
+        prop = ct.div(ct.sum(axis=1), axis=0)
+        plt.figure(figsize=figsize)
+        sns.heatmap(prop, annot=True, fmt=".2f", cmap="Greys", cbar=False)
+        plt.title(f"{c1} vs {c2} (%)", fontweight='bold')
+        plt.tight_layout()
+        plt.show()
+
 
 
 # ─── RageReport Class ────────────────────────────────────────────────────────
@@ -585,54 +646,52 @@ class RageReport:
         id_col=None,
         cv=5,
         tune=False,
-        tune_iter=20,
+        tune_iter=10,
         random_state=42
     ):
         """
         Competition-ready pipeline:
-        1) Explicit train/test
-        2) CV + optional hyperparameter tuning
-        3) Hold-out evaluation
-        4) Auto submission file (submission.csv)
+          1) Clean train/test
+          2) CV (+ optional tuning on Forest/XGBoost)
+          3) Hold-out evaluation
+          4) Writes submission.csv
         """
-        # 1) Clean train set
+
+        # ── 1) Prepare data ──────────────────────────────────────────────────────────
         self.df = df_train.copy()
         self.clean()
         train = self.df
 
-        # 2) Prepare test set
         test = pd.read_csv(df_test) if isinstance(df_test, str) else df_test.copy()
 
-        # 3) Split X/y
         X_train = train.drop(columns=[target])
         y_train = train[target]
-        X_test = test.drop(columns=[target], errors='ignore')
+        X_test  = test.drop(columns=[target], errors='ignore')
 
-        # 4) Problem detection
+        # ── 2) Problem type & encoding ──────────────────────────────────────────────
         is_classif = (y_train.dtype == 'object' or y_train.nunique() <= 10)
         if is_classif:
             le = LabelEncoder()
             y_train = le.fit_transform(y_train)
 
-        # 5) Preprocessor
+        # ── 3) Preprocessor ─────────────────────────────────────────────────────────
         num_feats = X_train.select_dtypes(include='number').columns.tolist()
         cat_feats = X_train.select_dtypes(include=['object', 'category']).columns.tolist()
+
         pre = ColumnTransformer([
             ('num', StandardScaler(), num_feats),
-            ('cat', OneHotEncoder(handle_unknown='ignore', sparse=True), cat_feats)
+            ('cat', OneHotEncoder(handle_unknown='ignore', sparse_output=False), cat_feats)
         ])
 
-        # 6) Candidates & CV splitter
+        # ── 4) Models & CV splitter ─────────────────────────────────────────────────
         if is_classif:
             scoring = 'roc_auc' if len(np.unique(y_train)) == 2 else 'accuracy'
             candidates = {
                 'Logistic': LogisticRegression(max_iter=1000, random_state=random_state),
                 'Forest':   RandomForestClassifier(n_estimators=200, random_state=random_state),
-                'XGBoost':  XGBClassifier(
-                    use_label_encoder=False,
-                    eval_metric='logloss',
-                    random_state=random_state
-                )
+                'XGBoost':  XGBClassifier(use_label_encoder=False,
+                                           eval_metric='logloss',
+                                           random_state=random_state)
             }
             cv_split = StratifiedKFold(n_splits=cv, shuffle=True, random_state=random_state)
         else:
@@ -644,38 +703,37 @@ class RageReport:
             }
             cv_split = KFold(n_splits=cv, shuffle=True, random_state=random_state)
 
-        # 7) Hyperparameter grids
+        # ── 5) Hyper-param grids (only Forest & XGBoost when tune=True) ─────────────
+        tunable = {'Forest', 'XGBoost'}
         param_distributions = {
-            'Logistic': {'model__C': [0.01, 0.1, 1, 10]},
-            'Forest':   {
-                'model__n_estimators': [100, 200, 500],
-                'model__max_depth': [None, 5, 10]
+            'Forest': {
+                'model__n_estimators': [100, 200],
+                'model__max_depth':    [None, 5, 10],
             },
-            'XGBoost':  {
-                'model__n_estimators': [100, 200, 500],
-                'model__max_depth': [3, 5, 7],
-                'model__learning_rate': [0.01, 0.1, 0.2]
-            },
-            'Ridge':    {'model__alpha': [0.1, 1.0, 10.0]}
+            'XGBoost': {
+                'model__n_estimators':  [100, 200],
+                'model__max_depth':     [3, 5],
+                'model__learning_rate': [0.05, 0.1],
+            }
         }
 
-        # 8) Evaluate & collect scores
+        # ── 6) Evaluation & hold-out ────────────────────────────────────────────────
         table = PrettyTable(['Model', 'CV Score', 'Hold-out Score'])
         best_score, best_pipe = -np.inf, None
 
         for name, model in candidates.items():
             pipe = Pipeline([('pre', pre), ('model', model)])
 
-            # hyperparameter tuning?
-            if tune and name in param_distributions:
+            if tune and name in tunable:
                 search = RandomizedSearchCV(
                     pipe,
                     param_distributions[name],
                     scoring=scoring,
                     cv=cv_split,
-                    n_iter=tune_iter,
+                    n_iter=min(tune_iter, len(param_distributions[name]) * 2),
+                    n_jobs=1,
                     random_state=random_state,
-                    n_jobs=-1
+                    verbose=1
                 )
                 search.fit(X_train, y_train)
                 pipe = search.best_estimator_
@@ -683,20 +741,18 @@ class RageReport:
             else:
                 scores = cross_val_score(
                     pipe, X_train, y_train,
-                    cv=cv_split, scoring=scoring, n_jobs=-1
+                    cv=cv_split, scoring=scoring, n_jobs=1
                 )
                 cv_score = np.mean(scores)
 
-            # fit on full train, predict on test
             pipe.fit(X_train, y_train)
             preds = pipe.predict(X_test)
 
-            # hold-out metric
             if target in test.columns:
                 y_true = test[target]
                 if is_classif:
                     if scoring == 'roc_auc':
-                        hold_score = roc_auc_score(y_true, pipe.predict_proba(X_test)[:,1])
+                        hold_score = roc_auc_score(y_true, pipe.predict_proba(X_test)[:, 1])
                     else:
                         hold_score = accuracy_score(y_true, preds)
                 else:
@@ -713,14 +769,21 @@ class RageReport:
             if isinstance(hold_score, float) and hold_score > best_score:
                 best_score, best_pipe = hold_score, pipe
 
-        # 9) Build submission file
+        # ── 7) Write submission file ────────────────────────────────────────────────
         if id_col and id_col in test.columns:
             submission = test[[id_col]].copy()
         else:
             submission = pd.DataFrame(index=test.index)
+
         submission[target] = best_pipe.predict(X_test)
         submission.to_csv('submission.csv', index=False)
 
-        print("🔥 Submission saved to submission.csv")
+        print("🔥 submission.csv has landed. Go upload and claim those points!")
         return table, 'submission.csv'
-   
+
+
+
+
+
+
+
