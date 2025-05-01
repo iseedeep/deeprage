@@ -654,44 +654,42 @@ class RageReport:
           1) Clean train/test
           2) CV (+ optional tuning on Forest/XGBoost)
           3) Hold-out evaluation
-          4) Writes submission.csv
+          4) Writes submission.csv using id from index or column
         """
 
-        # ── 1) Prepare data ──────────────────────────────────────────────────────────
+        # 1) Prepare data
         self.df = df_train.copy()
         self.clean()
         train = self.df
 
         test = pd.read_csv(df_test) if isinstance(df_test, str) else df_test.copy()
 
+        # Split features/target (id is in index, so not in columns)
         X_train = train.drop(columns=[target])
         y_train = train[target]
         X_test  = test.drop(columns=[target], errors='ignore')
 
-        # ── 2) Problem type & encoding ──────────────────────────────────────────────
+        # 2) Detect problem type
         is_classif = (y_train.dtype == 'object' or y_train.nunique() <= 10)
         if is_classif:
             le = LabelEncoder()
             y_train = le.fit_transform(y_train)
 
-        # ── 3) Preprocessor ─────────────────────────────────────────────────────────
+        # 3) Preprocessor
         num_feats = X_train.select_dtypes(include='number').columns.tolist()
-        cat_feats = X_train.select_dtypes(include=['object', 'category']).columns.tolist()
-
+        cat_feats = X_train.select_dtypes(include=['object','category']).columns.tolist()
         pre = ColumnTransformer([
             ('num', StandardScaler(), num_feats),
             ('cat', OneHotEncoder(handle_unknown='ignore', sparse_output=False), cat_feats)
         ])
 
-        # ── 4) Models & CV splitter ─────────────────────────────────────────────────
+        # 4) Models & CV splitter
         if is_classif:
-            scoring = 'roc_auc' if len(np.unique(y_train)) == 2 else 'accuracy'
+            scoring = 'roc_auc' if len(np.unique(y_train))==2 else 'accuracy'
             candidates = {
                 'Logistic': LogisticRegression(max_iter=1000, random_state=random_state),
                 'Forest':   RandomForestClassifier(n_estimators=200, random_state=random_state),
-                'XGBoost':  XGBClassifier(use_label_encoder=False,
-                                           eval_metric='logloss',
-                                           random_state=random_state)
+                'XGBoost':  XGBClassifier(use_label_encoder=False, eval_metric='logloss', random_state=random_state)
             }
             cv_split = StratifiedKFold(n_splits=cv, shuffle=True, random_state=random_state)
         else:
@@ -703,26 +701,26 @@ class RageReport:
             }
             cv_split = KFold(n_splits=cv, shuffle=True, random_state=random_state)
 
-        # ── 5) Hyper-param grids (only Forest & XGBoost when tune=True) ─────────────
-        tunable = {'Forest', 'XGBoost'}
+        # 5) Hyperparameter grids
+        tunable = {'Forest','XGBoost'}
         param_distributions = {
             'Forest': {
-                'model__n_estimators': [100, 200],
-                'model__max_depth':    [None, 5, 10],
+                'model__n_estimators': [100,200],
+                'model__max_depth':    [None,5,10],
             },
             'XGBoost': {
-                'model__n_estimators':  [100, 200],
-                'model__max_depth':     [3, 5],
-                'model__learning_rate': [0.05, 0.1],
+                'model__n_estimators':  [100,200],
+                'model__max_depth':     [3,5],
+                'model__learning_rate': [0.05,0.1],
             }
         }
 
-        # ── 6) Evaluation & hold-out ────────────────────────────────────────────────
-        table = PrettyTable(['Model', 'CV Score', 'Hold-out Score'])
+        # 6) CV evaluation & hold-out
+        table = PrettyTable(['Model','CV Score','Hold-out Score'])
         best_score, best_pipe = -np.inf, None
 
         for name, model in candidates.items():
-            pipe = Pipeline([('pre', pre), ('model', model)])
+            pipe = Pipeline([('pre',pre),('model',model)])
 
             if tune and name in tunable:
                 search = RandomizedSearchCV(
@@ -730,12 +728,12 @@ class RageReport:
                     param_distributions[name],
                     scoring=scoring,
                     cv=cv_split,
-                    n_iter=min(tune_iter, len(param_distributions[name]) * 2),
+                    n_iter=min(tune_iter,len(param_distributions[name])*2),
                     n_jobs=1,
                     random_state=random_state,
                     verbose=1
                 )
-                search.fit(X_train, y_train)
+                search.fit(X_train,y_train)
                 pipe = search.best_estimator_
                 cv_score = search.best_score_
             else:
@@ -745,14 +743,16 @@ class RageReport:
                 )
                 cv_score = np.mean(scores)
 
-            pipe.fit(X_train, y_train)
+            # fit & predict
+            pipe.fit(X_train,y_train)
             preds = pipe.predict(X_test)
 
+            # hold-out score
             if target in test.columns:
                 y_true = test[target]
                 if is_classif:
-                    if scoring == 'roc_auc':
-                        hold_score = roc_auc_score(y_true, pipe.predict_proba(X_test)[:, 1])
+                    if scoring=='roc_auc':
+                        hold_score = roc_auc_score(y_true, pipe.predict_proba(X_test)[:,1])
                     else:
                         hold_score = accuracy_score(y_true, preds)
                 else:
@@ -762,28 +762,23 @@ class RageReport:
 
             table.add_row([
                 name,
-                round(cv_score, 4),
-                round(hold_score, 4) if isinstance(hold_score, float) else hold_score
+                round(cv_score,4),
+                round(hold_score,4) if isinstance(hold_score,float) else hold_score
             ])
 
-            if isinstance(hold_score, float) and hold_score > best_score:
+            if isinstance(hold_score,float) and hold_score>best_score:
                 best_score, best_pipe = hold_score, pipe
 
-        # ── 7) Write submission file ────────────────────────────────────────────────
-        if id_col and id_col in test.columns:
+        # 7) Build submission.csv
+        preds = best_pipe.predict(X_test)
+        if id_col and test.index.name==id_col:
+            submission = pd.DataFrame({id_col: test.index, target: preds})
+        elif id_col and id_col in test.columns:
             submission = test[[id_col]].copy()
+            submission[target] = preds
         else:
-            submission = pd.DataFrame(index=test.index)
+            submission = pd.DataFrame({target: preds}, index=test.index)
 
-        submission[target] = best_pipe.predict(X_test)
         submission.to_csv('submission.csv', index=False)
-
-        print("🔥 submission.csv has landed. Go upload and claim those points!")
+        print("🔥 submission.csv is ready!")
         return table, 'submission.csv'
-
-
-
-
-
-
-
