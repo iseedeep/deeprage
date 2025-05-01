@@ -17,12 +17,12 @@ from matplotlib.patheffects import withStroke
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import OneHotEncoder, StandardScaler, LabelEncoder
 from sklearn.compose import ColumnTransformer
+from sklearn.experimental import enable_halving_search_cv
 from sklearn.linear_model import Ridge, LogisticRegression
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.metrics import mean_squared_error, accuracy_score, roc_auc_score
 from sklearn.pipeline import Pipeline
 from sklearn.model_selection import cross_val_score, StratifiedKFold, KFold, HalvingRandomSearchCV
-from sklearn.experimental import enable_halving_search_cv
 
 from xgboost import XGBClassifier, XGBRegressor
 from joblib import Memory
