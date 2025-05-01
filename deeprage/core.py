@@ -589,75 +589,84 @@ class RageReport:
         random_state=42
     ):
         """
-        Train on df_train, evaluate on df_test for competitions.
-
-        Params:
-        - df_train: train DataFrame
-        - df_test:  test DataFrame (must include same features)
-        - target:   name of target column
-        - id_col:   optional ID column to carry through
-        - cv:       number of CV folds
-        - tune:     whether to do RandomizedSearchCV
-        - tune_iter: max iterations for tuning
+        Competition-ready pipeline:
+        1) Explicit train/test
+        2) CV + optional hyperparameter tuning
+        3) Hold-out evaluation
+        4) Auto submission file (submission.csv)
         """
-
-        # 1) Clean both sets
+        # 1) Clean train set
         self.df = df_train.copy()
-        rr = self.clean()
-        train = rr.df
-        test = (
-            pd.read_csv(df_test) if isinstance(df_test, str) else df_test.copy()
-        )
+        self.clean()
+        train = self.df
 
-        # 2) Separate X/y
+        # 2) Prepare test set
+        test = pd.read_csv(df_test) if isinstance(df_test, str) else df_test.copy()
+
+        # 3) Split X/y
         X_train = train.drop(columns=[target])
         y_train = train[target]
-        X_test  = test.drop(columns=[target], errors='ignore')
+        X_test = test.drop(columns=[target], errors='ignore')
 
-        # 3) Problem type
+        # 4) Problem detection
         is_classif = (y_train.dtype == 'object' or y_train.nunique() <= 10)
         if is_classif:
-            # encode labels
             le = LabelEncoder()
             y_train = le.fit_transform(y_train)
 
-        # 4) Preprocessor
+        # 5) Preprocessor
         num_feats = X_train.select_dtypes(include='number').columns.tolist()
-        cat_feats = X_train.select_dtypes(include=['object','category']).columns.tolist()
-
+        cat_feats = X_train.select_dtypes(include=['object', 'category']).columns.tolist()
         pre = ColumnTransformer([
             ('num', StandardScaler(), num_feats),
             ('cat', OneHotEncoder(handle_unknown='ignore', sparse=True), cat_feats)
         ])
 
-        # 5) Define model-specific param grids
+        # 6) Candidates & CV splitter
+        if is_classif:
+            scoring = 'roc_auc' if len(np.unique(y_train)) == 2 else 'accuracy'
+            candidates = {
+                'Logistic': LogisticRegression(max_iter=1000, random_state=random_state),
+                'Forest':   RandomForestClassifier(n_estimators=200, random_state=random_state),
+                'XGBoost':  XGBClassifier(
+                    use_label_encoder=False,
+                    eval_metric='logloss',
+                    random_state=random_state
+                )
+            }
+            cv_split = StratifiedKFold(n_splits=cv, shuffle=True, random_state=random_state)
+        else:
+            scoring = 'neg_root_mean_squared_error'
+            candidates = {
+                'Ridge':   Ridge(solver='lsqr', random_state=random_state),
+                'Forest':  RandomForestRegressor(n_estimators=200, random_state=random_state),
+                'XGBoost': XGBRegressor(random_state=random_state)
+            }
+            cv_split = KFold(n_splits=cv, shuffle=True, random_state=random_state)
+
+        # 7) Hyperparameter grids
         param_distributions = {
-            'Logistic': {
-                'model__C': [0.01, 0.1, 1, 10],
-                'model__penalty': ['l2'],
-            },
-            'Forest': {
+            'Logistic': {'model__C': [0.01, 0.1, 1, 10]},
+            'Forest':   {
                 'model__n_estimators': [100, 200, 500],
-                'model__max_depth': [None, 5, 10, 20],
+                'model__max_depth': [None, 5, 10]
             },
-            'XGBoost': {
+            'XGBoost':  {
                 'model__n_estimators': [100, 200, 500],
                 'model__max_depth': [3, 5, 7],
-                'model__learning_rate': [0.01, 0.1, 0.2],
+                'model__learning_rate': [0.01, 0.1, 0.2]
             },
-            'Ridge': {
-                'model__alpha': [0.1, 1.0, 10.0],
-            }
+            'Ridge':    {'model__alpha': [0.1, 1.0, 10.0]}
         }
 
-        # 6) Evaluate (with optional tuning)
+        # 8) Evaluate & collect scores
         table = PrettyTable(['Model', 'CV Score', 'Hold-out Score'])
-        best_score = -np.inf
-        best_pipe = None
+        best_score, best_pipe = -np.inf, None
 
         for name, model in candidates.items():
             pipe = Pipeline([('pre', pre), ('model', model)])
 
+            # hyperparameter tuning?
             if tune and name in param_distributions:
                 search = RandomizedSearchCV(
                     pipe,
@@ -674,29 +683,44 @@ class RageReport:
             else:
                 scores = cross_val_score(
                     pipe, X_train, y_train,
-                    cv=cv_split,
-                    scoring=scoring,
-                    n_jobs=-1
+                    cv=cv_split, scoring=scoring, n_jobs=-1
                 )
                 cv_score = np.mean(scores)
 
-            # fit & test as before…
+            # fit on full train, predict on test
             pipe.fit(X_train, y_train)
             preds = pipe.predict(X_test)
-            # … compute hold_score …
 
-            table.add_row([name, round(cv_score,4), 
-                           round(hold_score,4) if isinstance(hold_score,float) else hold_score])
+            # hold-out metric
+            if target in test.columns:
+                y_true = test[target]
+                if is_classif:
+                    if scoring == 'roc_auc':
+                        hold_score = roc_auc_score(y_true, pipe.predict_proba(X_test)[:,1])
+                    else:
+                        hold_score = accuracy_score(y_true, preds)
+                else:
+                    hold_score = mean_squared_error(y_true, preds, squared=False)
+            else:
+                hold_score = 'N/A'
+
+            table.add_row([
+                name,
+                round(cv_score, 4),
+                round(hold_score, 4) if isinstance(hold_score, float) else hold_score
+            ])
 
             if isinstance(hold_score, float) and hold_score > best_score:
                 best_score, best_pipe = hold_score, pipe
-        
-        # 7) Build submission
-        output = test[[id_col]].copy() if id_col else test.copy()
-        output[target] = best_pipe.predict(X_test)
-        output.to_csv('submission.csv', index=False)
+
+        # 9) Build submission file
+        if id_col and id_col in test.columns:
+            submission = test[[id_col]].copy()
+        else:
+            submission = pd.DataFrame(index=test.index)
+        submission[target] = best_pipe.predict(X_test)
+        submission.to_csv('submission.csv', index=False)
 
         print("🔥 Submission saved to submission.csv")
         return table, 'submission.csv'
-
    
