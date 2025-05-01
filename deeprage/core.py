@@ -17,11 +17,13 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler, LabelEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.linear_model import Ridge, LogisticRegression
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.metrics import mean_squared_error, accuracy_score, roc_auc_score
 from sklearn.pipeline import Pipeline
-from sklearn.model_selection import cross_val_score, StratifiedKFold
+from sklearn.model_selection import cross_val_score, StratifiedKFold, KFold, RandomizedSearchCV
 
 from xgboost import XGBClassifier, XGBRegressor
 import shap
+import joblib
 
 # ─── Helper Functions ─────────────────────────────────────────────────────────
 
@@ -574,3 +576,143 @@ class RageReport:
     def ts_plot(self, x_col, y_col, title=None):
         """Instance wrapper for ts_plot helper."""
         ts_plot(self.df, x_col, y_col, title)
+    
+    def competition_model(
+        self,
+        df_train,
+        df_test,
+        target,
+        id_col=None,
+        cv=5,
+        tune=False,
+        tune_iter=20,
+        random_state=42
+    ):
+        """
+        Train on df_train, evaluate on df_test for competitions.
+
+        Params:
+        - df_train: train DataFrame
+        - df_test:  test DataFrame (must include same features)
+        - target:   name of target column
+        - id_col:   optional ID column to carry through
+        - cv:       number of CV folds
+        - tune:     whether to do RandomizedSearchCV
+        - tune_iter: max iterations for tuning
+        """
+
+        # 1) Clean both sets
+        self.df = df_train.copy()
+        rr = self.clean()
+        train = rr.df
+        test = (
+            pd.read_csv(df_test) if isinstance(df_test, str) else df_test.copy()
+        )
+
+        # 2) Separate X/y
+        X_train = train.drop(columns=[target])
+        y_train = train[target]
+        X_test  = test.drop(columns=[target], errors='ignore')
+
+        # 3) Problem type
+        is_classif = (y_train.dtype == 'object' or y_train.nunique() <= 10)
+        if is_classif:
+            # encode labels
+            le = LabelEncoder()
+            y_train = le.fit_transform(y_train)
+
+        # 4) Preprocessor
+        num_feats = X_train.select_dtypes(include='number').columns.tolist()
+        cat_feats = X_train.select_dtypes(include=['object','category']).columns.tolist()
+
+        pre = ColumnTransformer([
+            ('num', StandardScaler(), num_feats),
+            ('cat', OneHotEncoder(handle_unknown='ignore', sparse=True), cat_feats)
+        ])
+
+        # 5) Candidate models
+        if is_classif:
+            scoring = 'roc_auc' if len(np.unique(y_train))==2 else 'accuracy'
+            candidates = {
+                'Logistic': LogisticRegression(max_iter=1000, random_state=random_state),
+                'Forest':   RandomForestClassifier(n_estimators=200, random_state=random_state),
+                'XGBoost':  XGBClassifier(use_label_encoder=False,
+                                           eval_metric='logloss',
+                                           random_state=random_state)
+            }
+            cv_split = StratifiedKFold(n_splits=cv, shuffle=True, random_state=random_state)
+        else:
+            scoring = 'neg_root_mean_squared_error'
+            candidates = {
+                'Ridge':  Ridge(solver='lsqr', random_state=random_state),
+                'Forest': RandomForestRegressor(n_estimators=200, random_state=random_state),
+                'XGBoost': XGBRegressor(random_state=random_state)
+            }
+            cv_split = KFold(n_splits=cv, shuffle=True, random_state=random_state)
+
+        # 6) Evaluate (with optional tuning)
+        table = PrettyTable(['Model', 'CV Score', 'Hold-out Score'])
+        best_score = -np.inf
+        best_pipe = None
+
+        for name, model in candidates.items():
+            pipe = Pipeline([('pre', pre), ('model', model)])
+            # tuning?
+            if tune:
+                param_grid = {
+                    # just an example: adjust per model
+                    'model__n_estimators': [100, 200, 500],
+                    'model__max_depth':    [3, 5, 10, None]
+                }
+                search = RandomizedSearchCV(
+                    pipe, param_grid,
+                    scoring=scoring,
+                    cv=cv_split,
+                    n_iter=tune_iter,
+                    random_state=random_state,
+                    n_jobs=-1
+                )
+                search.fit(X_train, y_train)
+                pipe = search.best_estimator_
+                cv_score = search.best_score_
+            else:
+                scores = cross_val_score(
+                    pipe, X_train, y_train,
+                    cv=cv_split,
+                    scoring=scoring,
+                    n_jobs=-1
+                )
+                cv_score = np.mean(scores)
+
+            # fit on all train
+            pipe.fit(X_train, y_train)
+            preds = pipe.predict(X_test)
+            # compute hold-out metric
+            if target in test.columns:
+                y_true = test[target]
+                if is_classif:
+                    if scoring=='roc_auc':
+                        hold_score = roc_auc_score(y_true, pipe.predict_proba(X_test)[:,1])
+                    else:
+                        hold_score = accuracy_score(y_true, preds)
+                else:
+                    hold_score = mean_squared_error(y_true, preds, squared=False)
+            else:
+                hold_score = 'N/A'
+
+            table.add_row([name, round(cv_score,4), 
+                           round(hold_score,4) if isinstance(hold_score,float) else hold_score])
+
+            if isinstance(hold_score, float) and hold_score > best_score:
+                best_score = hold_score
+                best_pipe = pipe
+
+        # 7) Build submission
+        output = test[[id_col]].copy() if id_col else test.copy()
+        output[target] = best_pipe.predict(X_test)
+        output.to_csv('submission.csv', index=False)
+
+        print("🔥 Submission saved to submission.csv")
+        return table, 'submission.csv'
+
+   
